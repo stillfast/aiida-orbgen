@@ -939,25 +939,36 @@ def generate_final_orbital(
     # A re-run into the same directory overwrites the previous .orb/.param/.png,
     # so a name-diff would wrongly report "empty": compare modification times.
     started = time.time()
-    try:
-        completed = subprocess.run(
-            shell_command,
-            shell=True,
-            executable="/bin/bash",
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        result["status"] = "timeout"
-        result["message"] = f"orbgen did not finish within {timeout}s (see {log_path})"
-        return result
 
+    # The spillage takes minutes to hours (it scales with the primitive basis),
+    # so its output is streamed straight into the log file instead of being
+    # buffered until the process exits -- "tail -f" must show progress, and the
+    # L-BFGS iterations are printed on stdout, not through SIAB's logger.
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    returncode: int | None = None
     with open(log_path, "a", encoding="utf-8") as handle:
         handle.write(f"\n$ {shell_command}\n")
-        handle.write(completed.stdout or "")
-        handle.write(completed.stderr or "")
+        handle.flush()
+        try:
+            completed = subprocess.run(
+                shell_command,
+                shell=True,
+                executable="/bin/bash",
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout,
+            )
+            returncode = completed.returncode
+        except subprocess.TimeoutExpired:
+            result["status"] = "timeout"
+            result["message"] = (
+                f"orbgen did not finish within {timeout}s (see {log_path}); "
+                f"raise --final-orbital-timeout"
+            )
+            return result
+        finally:
+            handle.flush()
 
     produced = sorted(
         path for path in work_dir.iterdir()
@@ -992,12 +1003,16 @@ def generate_final_orbital(
         result["spillage"] = values
         result["spillage_last"] = values[-1]
 
-    if completed.returncode != 0:
-        tail = (completed.stderr or completed.stdout or "").strip().splitlines()
+    if returncode:
+        try:
+            tail = [line for line in log_path.read_text(errors="ignore").splitlines()
+                    if line.strip()][-1:]
+        except OSError:
+            tail = []
         result["status"] = "failed"
         result["message"] = (
-            f"orbgen exited {completed.returncode}"
-            + (f"; last output: {tail[-1]}" if tail else "")
+            f"orbgen exited {returncode} (see {log_path})"
+            + (f"; last output: {tail[0]}" if tail else "")
         )
         return result
 
