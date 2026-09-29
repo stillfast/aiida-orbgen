@@ -16,7 +16,7 @@ Data flow:
 
 import re
 import os
-from typing import Optional, Dict, Any, Union
+from typing import Any, Union
 
 from aiida import orm
 

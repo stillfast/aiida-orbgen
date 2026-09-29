@@ -23,7 +23,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 # The AiiDA profile must be loaded first (almost all functions here use orm.QueryBuilder)
 from aiida import load_profile

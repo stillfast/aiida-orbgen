@@ -24,6 +24,7 @@ __all__ = [
     "tolerance_verdict",
     "evaluate_energies",
     "best_of",
+    "describe_deltas",
 ]
 
 #: ``AbacusBaseWorkChain`` exit status of a child that ran to completion
@@ -174,3 +175,27 @@ def best_of(entries: Sequence[dict], tolerance_meV: float | None = None) -> dict
             if delta is not None and float(delta) <= float(tolerance_meV):
                 return entry
     return None
+
+
+def describe_deltas(energies: dict) -> list[str]:
+    """The ΔE lines to report after an extraction (per system and per geometry).
+
+    Pure formatting of what :func:`pair_energies` returned, so the WorkChain
+    reports the same numbers the ``energies`` output node holds.
+    """
+    lines = [
+        f"  ΔE_max (per system)  = {float(energies.get('delta_E_max_meV', 0.0)):.3f} meV "
+        f"({float(energies.get('delta_E_max_eV', 0.0)):.6f} eV)",
+        f"  ΔE_max (per atom)    = "
+        f"{float(energies.get('delta_E_max_per_atom_meV', 0.0)):.3f} meV "
+        f"({float(energies.get('delta_E_max_per_atom_eV', 0.0)):.6f} eV)",
+    ]
+    for entry in energies.get("delta_E_per_struct", []):
+        lines.append(
+            f"    {entry['folder']:30s}  N={int(entry['n_atoms']):2d}  "
+            f"E_pw={float(entry['E_pw']):.6f}  "
+            f"E_lcao_nsw={float(entry['E_lcao_nsw']):.6f}  "
+            f"dE={float(entry['dE']) * MEV_PER_EV:.3f} meV  "
+            f"dE/atom={float(entry['dE_per_atom']) * MEV_PER_EV:.3f} meV"
+        )
+    return lines

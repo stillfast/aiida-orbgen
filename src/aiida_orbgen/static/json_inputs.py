@@ -69,7 +69,6 @@ key (consistent with aiida-abacus ``test_abacus_base.py``), structured as follow
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 

@@ -20,8 +20,6 @@ Entry point
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
-
 from aiida import orm
 from aiida.engine import WorkChain, ExitCode, append_, if_, while_
 from aiida.orm import (
@@ -34,7 +32,6 @@ from aiida.orm import (
     Str,
 )
 
-from aiida_orbgen.interfaces import params_stru_to_ase
 from aiida_orbgen.static.defaults import (
     DEFAULT_CODE_LABEL,
     DEFAULT_MAX_MEMORY_KB,
@@ -45,12 +42,11 @@ from aiida_orbgen.static.defaults import (
 from aiida_orbgen.static.json_inputs import with_default_abacus
 from aiida_orbgen.workflows.energies import (
     SOFT_SUCCESS_EXIT_STATUS,
-    ChildEnergy,
+    describe_deltas,
     evaluate_energies,
     is_soft_success,
-    pair_energies,
-    tolerance_verdict,
 )
+from aiida_orbgen.workflows.extract import collect_child_energies
 from aiida_orbgen.workflows._grid import (
     GridEntry,
     build_cartesian_grid,
@@ -502,203 +498,58 @@ class OrbgenCalcWorkChain(WorkChain):
     # Step 4: extract energies
     # ------------------------------------------------------------------
 
-    def _verify_stru_orbital(self, node, expected_filename: str) -> bool:
-        """Check that the NUMERICAL_ORBITAL reference in an AbacusCalculation's
-        STRU points at a real orbital file (and not at an f-only stub file).
-
-        This is a workaround for the aiida-abacus STRU generation: when a bug makes
-        the STRU point at the wrong orbital file, this check keeps the run from
-        being accepted and yielding fake data.
-
-        Returns
-        -------
-        bool
-            True if STRU references the correct file, False otherwise.
-        """
-        # Decide via process_type (AiiDA registers the plugin as
-        # aiida.calculations:abacus.abacus)
-        if not hasattr(node, 'process_type'):
-            return True
-        if 'abacus' not in str(node.process_type).lower():
-            return True
-        try:
-            content = node.base.repository.get_object_content('STRU')
-        except Exception as exc:
-            self.report(
-                f"  WARNING: cannot read STRU (PK {node.pk}): {exc}; skipping check"
-            )
-            return True
-        if isinstance(content, bytes):
-            content = content.decode("utf-8")
-        for line in content.splitlines():
-            if line.strip() == "NUMERICAL_ORBITAL":
-                continue
-            if line.strip().endswith('.orb'):
-                actual = line.strip()
-                if actual != expected_filename:
-                    self.report(
-                        f"  ✗ STRU orbital mismatch (PK {node.pk}):\n"
-                        f"      STRU references : {actual}\n"
-                        f"      actual file     : {expected_filename}\n"
-                        f"      This usually means the aiida-abacus STRU generation "
-                        f"is buggy:\n"
-                        f"      ABACUS cannot find the referenced orbital file and "
-                        f"falls back to a wrong energy.\n"
-                        f"      Skipping this lcao result (rather than returning fake data)."
-                    )
-                    return False
-                return True
-        # No NUMERICAL_ORBITAL block found (pw calculation)
-        return True
-
     def extract_energies_step(self):
-        # Collect the misc (total_energy) of every successful child
-        outputs = []
-        for idx, item in enumerate(self.ctx.children_info):
-            node = item["node"]
-            # exit_status == 304 counts as a soft success (see
-            # workflows/energies.is_soft_success): the child ran the whole SCF
-            # and the energy extraction, only the LCAO accuracy missed.
-            if not is_soft_success(node.is_finished_ok, node.exit_status):
-                continue
-            # For lcao calculations, verify that the orbital filename referenced by
-            # the STRU is correct, so the aiida-abacus STRU bug cannot yield fake data
-            if str(item.get("basis", "")) == "lcao_nsw":
-                # Find the AbacusCalculation node
-                abacus_calc = None
-                if hasattr(node, 'called') and node.called:
-                    for sub in node.called:
-                        type_name = type(sub).__name__
-                        if 'AbacusCalculation' in type_name or 'abacus' in str(getattr(sub, 'process_type', '')).lower():
-                            abacus_calc = sub
-                            break
-                if abacus_calc is not None:
-                    # Find the real orbital filename (from pseudos['U'].filename_second)
-                    actual_filename = None
-                    if hasattr(abacus_calc, 'inputs') and 'pseudos' in abacus_calc.inputs:
-                        u_pseudo = abacus_calc.inputs.pseudos.get('U')
-                        if u_pseudo:
-                            actual_filename = u_pseudo.base.attributes.get('filename_second')
-                    if actual_filename and not self._verify_stru_orbital(
-                        abacus_calc, actual_filename
-                    ):
-                        continue  # skip it, do not extract fake data
-            # AbacusBaseWorkChain outputs misc, not output_parameters
-            misc = node.outputs.misc if hasattr(node.outputs, "misc") else None
-            if misc is None:
-                self.report(f"  WARNING: node {node.pk} has no misc output")
-                continue
-            # Extract total_energy from misc
-            d = misc.get_dict()
-            total_energy = d.get("total_energy")
-            if total_energy is None:
-                self.report(f"  WARNING: node {node.pk} misc has no total_energy")
-                continue
-            # Build the output record (basis_type: "lcao_nsw" -> "lcao")
-            # basis: "pw" or "lcao_nsw" -> "pw" or "lcao"
-            basis_str = str(item["basis"])
-            basis_type = "pw" if basis_str == "pw" else "lcao"
-            task_str = str(item["task"])
-            output_entry = {
-                "folder": task_str,
-                "basis_type": basis_type,
-                "E_total": float(total_energy),
-            }
-            # Pass plain dicts around here, do not wrap them in a Dict node
-            outputs.append(output_entry)
+        """ΔE of every usable child, plus the tolerance verdict.
 
-        if not outputs:
+        Node walking lives in ``workflows/extract.py`` and the arithmetic in
+        ``workflows/energies.py``; this step only narrates the result and turns it
+        into context flags — no exit code, so that the results/energies nodes are
+        still written out by ``finalize``.
+        """
+        try:
+            collected = collect_child_energies(
+                self.ctx.children_info, report=self.report
+            )
+        except Exception as exc:  # noqa: BLE001 — a broken child must not abort the WC
+            import traceback
+            self.report(f"ERROR: energy extraction failed: {exc}")
+            self.report(traceback.format_exc())
+            return self.exit_codes.WARNING_ENERGY_EXTRACT_FAILED
+
+        for note in collected.notes:
+            self.report(note)
+
+        if not collected.usable:
             self.report("WARNING: no children outputs to extract")
             self.report(
                 f"  (children_info = {len(self.ctx.children_info)} entries)"
             )
             return self.exit_codes.WARNING_ENERGY_EXTRACT_FAILED
 
-        # Do this directly in the WorkChain, without a calcfunction
+        if collected.lcao_all_skipped:
+            # Not one LCAO result is trustworthy, so the tolerance is effectively
+            # not met — `finalize` turns this into WARNING_TOLERANCE_EXCEEDED.
+            self.ctx.tolerance_exceeded = True
+            self.ctx.lcao_all_skipped = True
+        elif collected.n_lcao_skipped:
+            self.ctx.lcao_skipped_count = collected.n_lcao_skipped
 
-        try:
-            # Build a folder -> n_atoms map (from children_info)
-            n_atoms_by_folder = {}
-            for item in self.ctx.children_info:
-                folder = str(item.get("task", ""))
-                n_atoms_by_folder[folder] = int(item.get("n_atoms", 1))
+        energies = collected.energies
+        self.ctx.energies = energies
+        for line in describe_deltas(energies):
+            self.report(line)
 
-            # Pairing and the ΔE arithmetic have a single implementation
-            # (workflows/energies.py)
-            d = pair_energies([
-                ChildEnergy(
-                    folder=str(entry["folder"]),
-                    basis=str(entry["basis_type"]),
-                    energy=float(entry["E_total"]),
-                    n_atoms=n_atoms_by_folder.get(str(entry["folder"]), 1),
-                )
-                for entry in outputs
-                if entry.get("E_total") is not None
-            ])
-            energies_by_basis = d["energies"]
-            n_pw = d["n_pw"]
-            n_lcao_valid = d["n_lcao"]
-            n_lcao_total = sum(
-                1 for item in self.ctx.children_info
-                if str(item.get("basis", "")) == "lcao_nsw"
-            )
-            n_lcao_skipped = n_lcao_total - n_lcao_valid
-            if n_lcao_total > 0 and n_lcao_valid == 0:
-                self.report(
-                    f"  ✗ all {n_lcao_total} lcao children were skipped because of a "
-                    f"wrong STRU orbital, so lcao_nsw data is unusable "
-                    f"(aiida-abacus STRU generation is buggy). "
-                    f"pw={n_pw} is still valid, but lcao:nsw quality cannot be assessed."
-                )
-                # Report "tolerance exceeded": every lcao result is wrong, which means
-                # the tolerance is effectively not met
-                self.ctx.tolerance_exceeded = True
-                self.ctx.lcao_all_skipped = True
-            elif n_lcao_skipped > 0:
-                self.report(
-                    f"  ⚠ {n_lcao_skipped}/{n_lcao_total} lcao children skipped due to a "
-                    f"wrong STRU orbital"
-                )
-                self.ctx.lcao_skipped_count = n_lcao_skipped
-
-        except Exception as exc:
-            import traceback
-            self.report(f"ERROR: energy extraction failed: {exc}")
-            self.report(traceback.format_exc())
-            return self.exit_codes.WARNING_ENERGY_EXTRACT_FAILED
-
-        self.report(
-            f"  ΔE_max (per system)  = {d.get('delta_E_max_meV', '?'):.3f} meV "
-            f"({d.get('delta_E_max_eV', '?'):.6f} eV)"
-        )
-        self.report(
-            f"  ΔE_max (per atom)    = {d.get('delta_E_max_per_atom_meV', '?'):.3f} meV "
-            f"({d.get('delta_E_max_per_atom_eV', '?'):.6f} eV)"
-        )
-        for entry in d.get("delta_E_per_struct", []):
-            self.report(
-                f"    {entry['folder']:30s}  N={entry['n_atoms']:2d}  "
-                f"E_pw={entry['E_pw']:.6f}  "
-                f"E_lcao_nsw={entry['E_lcao_nsw']:.6f}  "
-                f"dE={entry['dE']*1000:.3f} meV  "
-                f"dE/atom={entry['dE_per_atom']*1000:.3f} meV"
-            )
-        self.ctx.energies = d
-
-        # Compare against the tolerance: ΔE_per_atom_max < tolerance_meV ?
-        # 0.1 kcal/mol ≈ 4.2 meV is the **per atom** standard (chemical accuracy)
-        tolerance_meV = float(self.ctx.abacus_cfg.get("tolerance_meV", 4.2))
-        delta_per_atom_meV = float(d.get("delta_E_max_per_atom_meV", 0.0))
-        if "lcao" in energies_by_basis and "pw" in energies_by_basis:
+        # ΔE/atom against the tolerance: 0.1 kcal/mol ≈ 4.2 meV/atom (chemical
+        # accuracy) is the per-atom standard.  The verdict has one implementation
+        # (energies.evaluate_energies), the same one the grid search uses.
+        if "lcao" in energies.get("energies", {}) and "pw" in energies.get("energies", {}):
+            tolerance_meV = float(self.ctx.abacus_cfg.get("tolerance_meV", 4.2))
+            verdict = evaluate_energies(energies, tolerance_meV)
             self.ctx.tolerance_meV = tolerance_meV
-            self.ctx.delta_per_atom_meV = delta_per_atom_meV
-            # 0.1 kcal/mol ≈ 4.2 meV is the **per atom** standard (chemical accuracy)
-            acceptable, message = tolerance_verdict(delta_per_atom_meV, tolerance_meV)
-            self.report(f"  {message}")
-            self.ctx.tolerance_exceeded = not acceptable
+            self.ctx.delta_per_atom_meV = verdict["delta_per_atom_meV"]
+            self.report(f"  {verdict['message']}")
+            self.ctx.tolerance_exceeded = not verdict["tolerance_ok"]
 
-        # Note: no exit code is returned here, the decision is left to finalize so
-        # that the results/energies nodes still get written out
         return None
 
     # ------------------------------------------------------------------

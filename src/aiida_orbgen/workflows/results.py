@@ -3,14 +3,18 @@
 The WorkChains' outputs are plain ``Dict`` nodes; each one is built by a small
 ``@calcfunction`` so that the mapping from raw run data to the reported summary
 is recorded (and cached) in provenance.
+
+Nothing here computes physics: the ΔE arithmetic has one implementation, in
+:mod:`aiida_orbgen.workflows.energies`.  ``create_energies_dict`` used to carry a
+second copy of it (for the case of being handed an ``AiiDA List`` of raw child
+records); the only caller passes the dict ``pair_energies()`` produced, so the copy
+was removed rather than left as a way for two runs to disagree.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-
 from aiida.engine import calcfunction
-from aiida.orm import Dict, List as AiiDA_List  # noqa: F401  (typing parity)
+from aiida.orm import Dict
 
 __all__ = [
     "create_energies_dict",
@@ -21,68 +25,23 @@ __all__ = [
 
 
 @calcfunction
-def create_energies_dict(d: "Dict|dict|List") -> Dict:
+def create_energies_dict(d: dict) -> Dict:
     """Build the ``energies`` Dict a WorkChain returns.
-    
+
     Parameters
     ----------
-    d : Dict, dict, or List
-        a plain dict, an AiiDA Dict, or an AiiDA List holding energy data
-        
+    d : dict or Dict
+        the dict returned by :func:`aiida_orbgen.workflows.energies.pair_energies`,
+        either plain or already wrapped in an AiiDA ``Dict``.
+
     Returns
     -------
     Dict
         the AiiDA Dict node
     """
-    # a List means raw data collected from children: compute the deltas first
-    if hasattr(d, "__iter__") and not hasattr(d, "get_dict"):
-        # d is an AiiDA List: compute the energy differences
-        energies_by_basis = {}
-        for item in d:
-            item_dict = item.get_dict() if hasattr(item, "get_dict") else dict(item)
-            basis = item_dict.get("basis_type", "unknown")
-            energy = item_dict.get("energy", item_dict.get("E_total"))
-            folder = item_dict.get("folder", "unknown")
-            pert = item_dict.get("pert")
-            if energy is None:
-                continue
-            energies_by_basis.setdefault(basis, []).append({
-                "folder": folder,
-                "energy": float(energy),
-                "pert": pert,
-            })
-        
-        delta_per_struct = []
-        if "pw" in energies_by_basis and "lcao" in energies_by_basis:
-            pw_by_folder = {e["folder"]: e for e in energies_by_basis["pw"]}
-            for e_lcao in energies_by_basis["lcao"]:
-                folder = e_lcao["folder"]
-                e_pw_entry = pw_by_folder.get(folder)
-                if e_pw_entry is None:
-                    continue
-                dE = abs(e_lcao["energy"] - e_pw_entry["energy"])
-                delta_per_struct.append({
-                    "folder": folder,
-                    "E_pw": e_pw_entry["energy"],
-                    "E_lcao_nsw": e_lcao["energy"],
-                    "dE": dE,
-                })
-        
-        delta_max = max((x["dE"] for x in delta_per_struct), default=0.0)
-        d_dict = {
-            "energies": energies_by_basis,
-            "delta_E_per_struct": delta_per_struct,
-            "delta_E_max_eV": float(delta_max),
-            "delta_E_max_meV": float(delta_max * 1000.0),
-        }
-    elif hasattr(d, "get_dict"):
-        # an AiiDA Dict: unwrap it
-        d_dict = d.get_dict()
-    else:
-        # a plain dict: use as-is
-        d_dict = dict(d)
-    
-    return Dict(dict=d_dict)
+    if hasattr(d, "get_dict"):     # already an AiiDA Dict
+        return Dict(dict=d.get_dict())
+    return Dict(dict=dict(d))
 
 
 @calcfunction

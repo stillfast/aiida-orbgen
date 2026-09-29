@@ -17,9 +17,8 @@ the classes in :mod:`aiida_orbgen.workflows.batch` only orchestrate.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from aiida import orm
 from aiida.engine import calcfunction
 from aiida.orm import (
     Dict,
@@ -39,11 +38,6 @@ from aiida_orbgen.interfaces import (
     parse_incar,
 )
 from aiida_orbgen.static.defaults import (
-    DEFAULT_CODE_LABEL,
-    DEFAULT_MAX_MEMORY_KB,
-    DEFAULT_NUM_MPI,
-    DEFAULT_QUEUE_NAME,
-    DEFAULT_WALLCLOCK_SECONDS,
     apply_input_overrides,
 )
 
@@ -54,6 +48,9 @@ __all__ = [
     "run_siab_pipeline",
     "build_abacus_child_inputs",
     "n_atoms_from_stru",
+    "find_abacus_child",
+    "expected_orbital_filename",
+    "verify_stru_orbital",
 ]
 
 
@@ -153,17 +150,17 @@ def run_siab_pipeline(
 
 
 def build_abacus_child_inputs(
-    dft_entry: Dict[str, Any],
+    dft_entry: dict[str, Any],
     *,
     basis: str,                      # "pw" or "lcao_nsw"
     code_label: str,
     family_label: str,
-    parameters: Dict[str, Any],       # from abacus.json: {"input": {...}}
+    parameters: dict[str, Any],       # from abacus.json: {"input": {...}}
     queue_name: str,
     num_mpi: int,
     wallclock: int,
     max_memory_kb: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build the inputs of one ``abacus.base`` workchain.
 
     Parameters
@@ -272,3 +269,108 @@ def n_atoms_from_stru(stru_path: str | None, report=None) -> int:
     if total <= 0:
         total = sum(len(sp.get("atom", [])) for sp in species if isinstance(sp, dict))
     return total if total > 0 else 1
+
+
+# ===========================================================================
+#  the NUMERICAL_ORBITAL guard (LCAO children only)
+# ===========================================================================
+
+
+def find_abacus_child(node):
+    """The ``AbacusCalculation`` a child workchain called, if there is one.
+
+    Returns ``None`` for a node that never reached the ABACUS plugin (e.g. one
+    that failed earlier), which the callers treat as "nothing to verify".
+    """
+    if not getattr(node, "called", None):
+        return None
+    for sub in node.called:
+        if "AbacusCalculation" in type(sub).__name__:
+            return sub
+        if "abacus" in str(getattr(sub, "process_type", "")).lower():
+            return sub
+    return None
+
+
+def expected_orbital_filename(abacus_calc) -> str | None:
+    """The orbital file name AiiDA injected into the child's ``NUMERICAL_ORBITAL``.
+
+    AiiDA carries the file name of the second pseudo (the ``.orb``) as the
+    ``filename_second`` attribute; the STRU generator writes it into the STRU.  Any
+    species is accepted — the first pseudo that has such an attribute wins — so a
+    system other than the uranium test case works too.
+    """
+    pseudos = getattr(getattr(abacus_calc, "inputs", None), "pseudos", None)
+    if not pseudos:
+        return None
+    for pseudo in pseudos.values():
+        attributes = getattr(getattr(pseudo, "base", None), "attributes", {})
+        filename = attributes.get("filename_second") if attributes else None
+        if filename:
+            return str(filename)
+    return None
+
+
+def verify_stru_orbital(node, expected_filename: str, report=None) -> bool:
+    """Whether an ABACUS child's STRU references *expected_filename*.
+
+    A workaround for the aiida-abacus STRU generation: when it points
+    ``NUMERICAL_ORBITAL`` at the wrong file (typically an f-only stub), ABACUS
+    cannot find the orbital and falls back to a wrong energy — a result that looks
+    fine and is not.  Such a child is skipped instead of contributing fake data.
+
+    Parameters
+    ----------
+    node : AbacusCalculation
+        the child whose ``STRU`` is checked.
+    expected_filename : str
+        the file name AiiDA injected (see :func:`expected_orbital_filename`).
+    report : callable, optional
+        where the mismatch is narrated (``self.report`` in a WorkChain).
+
+    Returns
+    -------
+    bool
+        ``True`` when the STRU is missing/unreadable/a PW STRU (nothing to check),
+        ``False`` only on a positive mismatch.
+    """
+    def _warn(message: str) -> None:
+        if report is not None:
+            report(message)
+
+    # Decide by process_type: AiiDA registers the plugin as
+    # aiida.calculations:abacus.abacus
+    if not hasattr(node, "process_type"):
+        return True
+    if "abacus" not in str(node.process_type).lower():
+        return True
+
+    try:
+        content = node.base.repository.get_object_content("STRU")
+    except Exception as exc:  # noqa: BLE001 — a missing STRU must not abort the step
+        _warn(f"  WARNING: cannot read STRU (PK {node.pk}): {exc}; skipping check")
+        return True
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped == "NUMERICAL_ORBITAL":
+            continue
+        if not stripped.endswith(".orb"):
+            continue
+        if stripped != expected_filename:
+            _warn(
+                f"  ✗ STRU orbital mismatch (PK {node.pk}):\n"
+                f"      STRU references : {stripped}\n"
+                f"      actual file     : {expected_filename}\n"
+                f"      This usually means the aiida-abacus STRU generation "
+                f"is buggy:\n"
+                f"      ABACUS cannot find the referenced orbital file and "
+                f"falls back to a wrong energy.\n"
+                f"      Skipping this lcao result (rather than returning fake data)."
+            )
+            return False
+        return True
+    # No NUMERICAL_ORBITAL block found (a pw STRU): nothing to verify
+    return True

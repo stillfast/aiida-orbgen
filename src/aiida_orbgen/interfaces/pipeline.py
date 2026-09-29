@@ -21,7 +21,7 @@ Bond lengths (``pertmags``) are delegated entirely to SIAB:
 
 import os
 import json
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 from aiida_orbgen.interfaces.nsw import generate_nsw

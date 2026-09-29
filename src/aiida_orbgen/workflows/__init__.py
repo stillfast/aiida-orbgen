@@ -20,7 +20,10 @@ Module layout
 
 ``batch.py``     the two WorkChains (orchestration only: submit → collect → decide)
 ``_grid.py``     grid candidates and the stopping rule (pure logic)
-``siab.py``      everything that talks to SIAB and generates/parses its files
+``siab.py``      everything that talks to SIAB, generates/parses its files, and
+                 checks the NUMERICAL_ORBITAL reference of an ABACUS child
+``energies.py``  the ΔE arithmetic, the tolerance verdict, the 304-is-a-success rule
+``extract.py``   reading children (``misc.total_energy``, the STRU guard) into records
 ``results.py``   assembly of the output Dicts (four calcfunctions)
 
 ``advanced.py`` was deleted on 2026-09-29: its three unique capabilities
