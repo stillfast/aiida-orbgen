@@ -31,6 +31,14 @@ from aiida_orbgen.utils.report.validate import (
     validate_orbital,
 )
 from aiida_orbgen.workflows import OrbgenCalcWorkChain, OrbgenGridSearchWorkChain
+from aiida_orbgen.workflows.energies import (
+    ChildEnergy,
+    best_of,
+    evaluate_energies,
+    is_soft_success,
+    pair_energies,
+    tolerance_verdict,
+)
 from aiida_orbgen.workflows._grid import (
     GridEntry,
     build_cartesian_grid,
@@ -525,3 +533,77 @@ def test_normalise_stands_its_ground_on_details(tmp_path):
     assert monomer_result["ok"] is True
     assert monomer_result["missing_data"] == []
     assert monomer_result["blocking_jobs"] == []
+
+
+# ---------------------------------------------------------------------------
+#  ΔE extraction / tolerance verdict (workflows/energies.py)
+# ---------------------------------------------------------------------------
+def test_304_is_a_soft_success_only_with_energies():
+    assert is_soft_success(True, 0) is True
+    assert is_soft_success(False, 304, has_energies=True) is True
+    # 304 without an energies node means the extraction really failed
+    assert is_soft_success(False, 304, has_energies=False) is False
+    assert is_soft_success(False, 302) is False
+    assert is_soft_success(False, None) is False
+
+
+def test_pair_energies_normalises_per_atom():
+    result = pair_energies([
+        ChildEnergy("U-dimer-1.89", "pw", -100.000),
+        ChildEnergy("U-dimer-1.89", "lcao", -99.998, n_atoms=2),
+        ChildEnergy("U-dimer-2.09", "pw", -100.000),
+        ChildEnergy("U-dimer-2.09", "lcao", -99.990, n_atoms=2),
+    ])
+    assert result["n_pw"] == 2 and result["n_lcao"] == 2
+    assert [e["folder"] for e in result["delta_E_per_struct"]] == [
+        "U-dimer-1.89", "U-dimer-2.09"
+    ]
+    # 2 meV total over 2 atoms = 1 meV/atom
+    assert result["delta_E_per_struct"][0]["dE"] == pytest.approx(2e-3)
+    assert result["delta_E_per_struct"][0]["dE_per_atom"] == pytest.approx(1e-3)
+    assert result["delta_E_max_meV"] == pytest.approx(10.0)
+    assert result["delta_E_max_per_atom_meV"] == pytest.approx(5.0)
+    assert result["delta_E_max_eV"] == pytest.approx(0.010)
+
+
+def test_pair_energies_skips_geometry_without_a_pw_partner():
+    result = pair_energies([
+        ChildEnergy("only-lcao", "lcao", -1.0),
+        ChildEnergy("pair", "pw", -2.0),
+        ChildEnergy("pair", "lcao", -1.999),
+    ])
+    assert [e["folder"] for e in result["delta_E_per_struct"]] == ["pair"]
+    assert result["n_lcao"] == 2 and result["n_pw"] == 1
+
+
+def test_pair_energies_with_nothing_to_pair_is_zero_not_perfect():
+    """An unpaired run must not look like a 0 meV convergence."""
+    result = pair_energies([ChildEnergy("dimer", "lcao", -1.0)])
+    assert result["delta_E_per_struct"] == []
+    assert result["delta_E_max_per_atom_meV"] == 0.0
+    # ... which is why the grid side uses evaluate_energies(), where a missing
+    # key becomes inf and the point is rejected rather than accepted
+    assert evaluate_energies({}, 4.2)["tolerance_ok"] is False
+    assert evaluate_energies({}, 4.2)["delta_per_atom_meV"] == float("inf")
+
+
+def test_tolerance_verdict_uses_the_per_atom_standard():
+    ok, message = tolerance_verdict(4.2, 4.2)
+    assert ok is True and "tolerance OK" in message
+    bad, message = tolerance_verdict(4.21, 4.2)
+    assert bad is False and "EXCEEDED" in message
+    assert "per atom" not in message.replace("/atom", "")  # wording sanity
+
+
+def test_best_of_takes_the_first_acceptable_point():
+    entries = [
+        {"l_max": 2, "tolerance_ok": False, "delta_per_atom_meV": 100.0},
+        {"l_max": 3, "tolerance_ok": True, "delta_per_atom_meV": 3.0},
+        {"l_max": 4, "tolerance_ok": True, "delta_per_atom_meV": 1.0},
+    ]
+    assert best_of(entries)["l_max"] == 3          # cheapest acceptable, not lowest
+    assert best_of(entries[:1]) is None
+    assert best_of([], tolerance_meV=4.2) is None
+    # the explicit tolerance is a fallback for entries without the flag
+    assert best_of([{"l_max": 5, "delta_per_atom_meV": 1.0}], tolerance_meV=4.2) == \
+        {"l_max": 5, "delta_per_atom_meV": 1.0}

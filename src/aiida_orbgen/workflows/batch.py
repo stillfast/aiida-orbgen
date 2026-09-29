@@ -41,6 +41,14 @@ from aiida_orbgen.static.defaults import (
     DEFAULT_WALLCLOCK_SECONDS,
 )
 from aiida_orbgen.static.json_inputs import with_default_abacus
+from aiida_orbgen.workflows.energies import (
+    SOFT_SUCCESS_EXIT_STATUS,
+    ChildEnergy,
+    evaluate_energies,
+    is_soft_success,
+    pair_energies,
+    tolerance_verdict,
+)
 from aiida_orbgen.workflows._grid import (
     GridEntry,
     build_cartesian_grid,
@@ -425,10 +433,9 @@ class OrbgenCalcWorkChain(WorkChain):
 
     def inspect_children(self):
         info = self.ctx.children_info
-        # 304 (tolerance exceeded) 视为软成功, 不算 failure
         n_ok = sum(
             1 for i in info
-            if i["node"].is_finished_ok or i["node"].exit_status == 304
+            if is_soft_success(i["node"].is_finished_ok, i["node"].exit_status)
         )
         n_fail = len(info) - n_ok
         self.report(f"  Children: {n_ok} OK, {n_fail} failed (of {len(info)})")
@@ -488,12 +495,11 @@ class OrbgenCalcWorkChain(WorkChain):
         outputs = []
         for idx, item in enumerate(self.ctx.children_info):
             node = item["node"]
-            if not node.is_finished_ok:
-                # exit_status == 304 (WARNING_TOLERANCE_EXCEEDED) 视为软成功:
-                # 子任务跑完了 SCF + energy extract, 只是 lcao 精度没达标,
-                # 仍然有合法的 misc.total_energy, 继续提取.
-                if node.exit_status != 304:
-                    continue
+            # exit_status == 304 counts as a soft success (see
+            # workflows/energies.is_soft_success): the child ran the whole SCF
+            # and the energy extraction, only the LCAO accuracy missed.
+            if not is_soft_success(node.is_finished_ok, node.exit_status):
+                continue
             # 【新增】对 lcao 计算, 验证 STRU 引用的 orbital 文件名是否正确
             # 防止 aiida-abacus STRU 生成的 bug 导致假数据
             if str(item.get("basis", "")) == "lcao_nsw":
@@ -556,44 +562,20 @@ class OrbgenCalcWorkChain(WorkChain):
                 folder = str(item.get("task", ""))
                 n_atoms_by_folder[folder] = int(item.get("n_atoms", 1))
 
-            energies_by_basis = {}
-            for entry in outputs:
-                basis = entry.get("basis_type", "unknown")
-                energy = entry.get("E_total")
-                if energy is None:
-                    continue
-                folder = entry.get("folder", "unknown")
-                n_atoms = n_atoms_by_folder.get(folder, 1)
-                energies_by_basis.setdefault(basis, []).append({
-                    "folder": folder,
-                    "energy": float(energy),
-                    "pert": None,
-                    "n_atoms": n_atoms,
-                })
-
-            delta_per_struct = []
-            if "pw" in energies_by_basis and "lcao" in energies_by_basis:
-                pw_by_folder = {e["folder"]: e for e in energies_by_basis["pw"]}
-                for e_lcao in energies_by_basis["lcao"]:
-                    folder = e_lcao["folder"]
-                    e_pw_entry = pw_by_folder.get(folder)
-                    if e_pw_entry is None:
-                        continue
-                    n_atoms = max(1, e_lcao.get("n_atoms", 1))
-                    dE_total = abs(e_lcao["energy"] - e_pw_entry["energy"])
-                    dE_per_atom = dE_total / n_atoms
-                    delta_per_struct.append({
-                        "folder": folder,
-                        "n_atoms": n_atoms,
-                        "E_pw": e_pw_entry["energy"],
-                        "E_lcao_nsw": e_lcao["energy"],
-                        "dE": dE_total,
-                        "dE_per_atom": dE_per_atom,
-                    })
-
-            # 【新增】检查 lcao 数据的完整性
-            n_pw = len(energies_by_basis.get("pw", []))
-            n_lcao_valid = len(energies_by_basis.get("lcao", []))
+            # 配对与 ΔE 计算只有一份实现 (workflows/energies.py)
+            d = pair_energies([
+                ChildEnergy(
+                    folder=str(entry["folder"]),
+                    basis=str(entry["basis_type"]),
+                    energy=float(entry["E_total"]),
+                    n_atoms=n_atoms_by_folder.get(str(entry["folder"]), 1),
+                )
+                for entry in outputs
+                if entry.get("E_total") is not None
+            ])
+            energies_by_basis = d["energies"]
+            n_pw = d["n_pw"]
+            n_lcao_valid = d["n_lcao"]
             n_lcao_total = sum(
                 1 for item in self.ctx.children_info
                 if str(item.get("basis", "")) == "lcao_nsw"
@@ -614,18 +596,6 @@ class OrbgenCalcWorkChain(WorkChain):
                 )
                 self.ctx.lcao_skipped_count = n_lcao_skipped
 
-            delta_max = max((x["dE"] for x in delta_per_struct), default=0.0)
-            delta_max_per_atom = max(
-                (x["dE_per_atom"] for x in delta_per_struct), default=0.0
-            )
-            d = {
-                "energies": energies_by_basis,
-                "delta_E_per_struct": delta_per_struct,
-                "delta_E_max_eV": float(delta_max),
-                "delta_E_max_meV": float(delta_max * 1000.0),
-                "delta_E_max_per_atom_eV": float(delta_max_per_atom),
-                "delta_E_max_per_atom_meV": float(delta_max_per_atom * 1000.0),
-            }
         except Exception as exc:
             import traceback
             self.report(f"ERROR: energy extraction failed: {exc}")
@@ -657,20 +627,10 @@ class OrbgenCalcWorkChain(WorkChain):
         if "lcao" in energies_by_basis and "pw" in energies_by_basis:
             self.ctx.tolerance_meV = tolerance_meV
             self.ctx.delta_per_atom_meV = delta_per_atom_meV
-            if delta_per_atom_meV > tolerance_meV:
-                self.report(
-                    f"  ✗ tolerance EXCEEDED: ΔE/atom_max={delta_per_atom_meV:.3f} meV "
-                    f"> tolerance_meV={tolerance_meV:.3f} meV "
-                    f"(0.1 kcal/mol/atom = 4.2 meV) -> lcao:nsw NOT acceptable"
-                )
-                self.ctx.tolerance_exceeded = True
-            else:
-                self.report(
-                    f"  ✓ tolerance OK: ΔE/atom_max={delta_per_atom_meV:.3f} meV "
-                    f"<= tolerance_meV={tolerance_meV:.3f} meV "
-                    f"-> lcao:nsw is acceptable"
-                )
-                self.ctx.tolerance_exceeded = False
+            # 0.1 kcal/mol ≈ 4.2 meV 是 **per atom** 标准 (化学精度)
+            acceptable, message = tolerance_verdict(delta_per_atom_meV, tolerance_meV)
+            self.report(f"  {message}")
+            self.ctx.tolerance_exceeded = not acceptable
 
         # 注意：不在这里返回 exit code，把判断留给 finalize
         # 这样可以保证 results/energies 节点仍然能正常输出
@@ -687,8 +647,7 @@ class OrbgenCalcWorkChain(WorkChain):
         n_failed = 0
         for item in info:
             node = item["node"]
-            # 304 (tolerance exceeded) 视为软成功, 不算 failure
-            ok = node.is_finished_ok or node.exit_status == 304
+            ok = is_soft_success(node.is_finished_ok, node.exit_status)
             if ok:
                 n_ok += 1
             else:
@@ -1127,13 +1086,14 @@ class OrbgenGridSearchWorkChain(WorkChain):
         l_max, r_cut = entry.l_max, entry.r_cut
 
         # 304 = WARNING_TOLERANCE_EXCEEDED: 子任务跑完了 SCF + energy extract,
-        # 只是 lcao_nsw 精度没达标, 这对 grid search 是**有效信息**而非错误
+        # 只是 lcao_nsw 精度没达标, 这对 grid search 是**有效信息**而非错误.
+        # 分类与判定都取自 workflows/energies.py (唯一定义).
         has_energies = hasattr(calc_node.outputs, "energies")
-        is_tolerance_exceeded = (
-            calc_node.exit_status == 304 and has_energies
+        treat_as_soft_success = is_soft_success(
+            calc_node.is_finished_ok, calc_node.exit_status, has_energies
         )
-        treat_as_soft_success = (
-            calc_node.is_finished_ok or is_tolerance_exceeded
+        is_tolerance_exceeded = (
+            calc_node.exit_status == SOFT_SUCCESS_EXIT_STATUS and has_energies
         )
 
         result_entry = {
@@ -1147,10 +1107,9 @@ class OrbgenGridSearchWorkChain(WorkChain):
 
         if treat_as_soft_success and has_energies:
             energies = calc_node.outputs.energies.get_dict()
-            delta_per_atom_meV = float(
-                energies.get("delta_E_max_per_atom_meV", float("inf"))
-            )
-            tolerance_ok = delta_per_atom_meV <= self.ctx.tolerance_meV
+            verdict = evaluate_energies(energies, self.ctx.tolerance_meV)
+            delta_per_atom_meV = verdict["delta_per_atom_meV"]
+            tolerance_ok = verdict["tolerance_ok"]
             result_entry["energies"] = energies
             result_entry["delta_per_atom_meV"] = delta_per_atom_meV
             result_entry["tolerance_ok"] = tolerance_ok
@@ -1216,20 +1175,19 @@ class OrbgenGridSearchWorkChain(WorkChain):
             entry["is_finished_ok"] = calc_node.is_finished_ok
 
             has_energies = hasattr(calc_node.outputs, "energies")
-            is_tolerance_exceeded = (
-                calc_node.exit_status == 304 and has_energies
+            treat_as_soft_success = is_soft_success(
+                calc_node.is_finished_ok, calc_node.exit_status, has_energies
             )
-            treat_as_soft_success = (
-                calc_node.is_finished_ok or is_tolerance_exceeded
+            is_tolerance_exceeded = (
+                calc_node.exit_status == SOFT_SUCCESS_EXIT_STATUS and has_energies
             )
             entry["tolerance_exceeded_only"] = is_tolerance_exceeded
 
             if treat_as_soft_success and has_energies:
                 energies = calc_node.outputs.energies.get_dict()
-                delta_per_atom_meV = float(
-                    energies.get("delta_E_max_per_atom_meV", float("inf"))
-                )
-                tolerance_ok = delta_per_atom_meV <= self.ctx.tolerance_meV
+                verdict = evaluate_energies(energies, self.ctx.tolerance_meV)
+                delta_per_atom_meV = verdict["delta_per_atom_meV"]
+                tolerance_ok = verdict["tolerance_ok"]
                 entry["energies"] = energies
                 entry["delta_per_atom_meV"] = delta_per_atom_meV
                 entry["tolerance_ok"] = tolerance_ok
