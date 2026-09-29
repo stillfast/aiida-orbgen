@@ -1,0 +1,23 @@
+# ---------------------------------------------------------------------------
+# parameters/abacus/dense_grid.yml
+#
+# Diagnostic preset: same as `test`, plus a denser charge-density grid
+# (`ecutrho = 1200` Ry instead of the 4xecutwfc default of 600).
+#
+# Why it exists: a norm-conserving pseudopotential whose NLCC core charge is very
+# concentrated at r -> 0 has to be integrated on the real-space / FFT grid, and a
+# too-coarse grid makes V_xc and E_xc inconsistent between ABACUS's plane-wave and
+# LCAO paths (observed 2026-09-30: `E_lcao - E_pw = -69 eV` with the new
+# `U.pbe-n-nc.UPF`, whose PP_NLCC peaks at 20.8 e/Bohr^3 versus 3.9 in the older
+# `U.pbe-n-nc.14ve.UPF` that agrees to +0.17 eV).  Raising only the density grid
+# keeps the plane-wave reference (and the orbital basis) unchanged, so any change in
+# the discrepancy is caused by the core charge's representation.
+#
+# Not for production: it is here to run that comparison, nothing else.
+# ---------------------------------------------------------------------------
+dense_grid:
+  parameters:
+    input:
+      ks_solver: scalapack_gvx
+      ecutrho: 1200
+    max_iterations: 4
