@@ -43,8 +43,44 @@ siab_required = pytest.mark.skipif(
     reason="SIAB library not available"
 )
 
-# 项目实际目录
-PROJECT_DIR = Path("/home/liguozhou/abacus/calculations/orbgen/project/pbe")
+# 参考数据目录.
+#
+# 原来写死 ``project/pbe``, 那份数据后来搬走/改名了, 于是整个模块以
+# "AssertionError: STRU not found" 的形式失败 -- 看起来像代码坏了, 实际是缺
+# fixture. 现在依次在候选位置里找第一个可用的; 都找不到就 skip 整个模块, 并由
+# ``requires_fixture`` 说明原因.
+_LOCAL = Path("/home/liguozhou/abacus/calculations/orbgen/project")
+PROJECT_CANDIDATES = (
+    _LOCAL / "pbe",                                  # 原始位置
+    _LOCAL / "orbgen_api" / "static",                # 现在的实际位置
+    _LOCAL / "test" / "pbe",
+    _LOCAL / "_archive_old_install_20260929" / "orbgen",
+)
+
+
+def _is_reference_tree(path: Path) -> bool:
+    return (
+        path is not None
+        and (path / "pbe_orbgen.json").is_file()
+        and (path / "primitive_jy").is_dir()
+        and (path / "U-dimer-1.89-9au" / "INPUT").is_file()
+    )
+
+
+PROJECT_DIR = next((p for p in PROJECT_CANDIDATES if _is_reference_tree(p)), None)
+
+if PROJECT_DIR is None:  # keep the module importable; every test is skipped
+    PROJECT_DIR = PROJECT_CANDIDATES[0]
+    pytestmark = pytest.mark.skipif(
+        True,
+        reason="reference project data not found in "
+               + ", ".join(str(p) for p in PROJECT_CANDIDATES),
+    )
+else:
+    pytestmark = pytest.mark.skipif(
+        not SIAB_AVAILABLE, reason="SIAB library not available"
+    )
+
 JSON_CONFIG_PATH = PROJECT_DIR / "pbe_orbgen.json"
 PRIMITIVE_JY_DIR = PROJECT_DIR / "primitive_jy"
 JOB_DIR = PROJECT_DIR / "U-dimer-1.89-9au"
