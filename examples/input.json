@@ -1,0 +1,18 @@
+{
+    "parameters": {
+        "abacus": {
+            "test": "test"
+        },
+        "orbgen": {
+            "test": "test"
+        }
+    },
+    "static": {
+        "pseudo_path": "/home/liguozhou/abacus/calculations/orbgen/project/pseudo/U.pbe-n-nc.14ve.UPF",
+        "metadata": "yeesuan"
+    },
+    "profile": "aiida_profile",
+    "code": {
+        "abacus": "abacus_lts@yeesuan"
+    }
+}

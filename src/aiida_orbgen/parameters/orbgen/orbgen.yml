@@ -1,0 +1,151 @@
+# ---------------------------------------------------------------------------
+# parameters/orbgen/orbgen.yml
+#
+# SIAB (ABACUS-CSW-NAO) presets for `aiida-orbgen run -i input.json`, i.e. the
+# content of an orbgen.json. The loader passes every key through verbatim; the
+# only injected value is `pseudo_dir`, which comes from
+# input.json["static"]["pseudo_path"] (so the same preset works with any
+# pseudopotential).
+#
+# Selected in the same three ways as the abacus slot:
+#
+#   "parameters": {"orbgen": "u_14ve"}            # this file, preset u_14ve
+#   "parameters": {"orbgen": ["u_14ve"]}          # list form
+#   "parameters": {"orbgen": {"test": "test"}}    # parameters/orbgen/test.yml
+#
+# The (l_max, r_cut) candidate grid is derived from `bessel_nao_rcut` and
+# `geoms[0].lmaxmax` (see `aiida_orbgen.static.json_inputs`), and capped by the
+# abacus preset's `max_l_max` / `max_r_cut`. More than one candidate ⇒
+# `run` submits OrbgenGridSearchWorkChain instead of OrbgenCalcWorkChain.
+#
+# `environment` / `mpi_command` / `abacus_command` are only used by SIAB itself
+# when it has to launch ABACUS (i.e. `report --force-final-orbital`) and by the
+# final orbital step; the AiiDA path goes through the aiida-abacus plugin.
+# ---------------------------------------------------------------------------
+
+# Production preset for U with the 14-valence-electron pseudopotential.
+u_14ve:
+  element: "U"
+  pseudo_dir: "/home/liguozhou/abacus/calculations/orbgen/project/pseudo/U.pbe-n-nc.14ve.UPF"
+  environment: "ulimit -l unlimited 2>/dev/null; export PATH=/home/liguozhou/install/miniconda3/envs/orbgen/bin:$PATH; export LD_LIBRARY_PATH=/home/liguozhou/install/miniconda3/envs/orbgen/lib:$LD_LIBRARY_PATH; export UCX_TLS=tcp,self,sm; export OMP_NUM_THREADS=1"
+  mpi_command: "mpirun -np 24 --bind-to numa"
+  abacus_command: "abacus"
+
+  # The local `abacus` (conda env `orbgen`) is a CUDA build: with
+  # `mpirun -np 24` every rank tries cudaMalloc for its GINT buffers and the
+  # run dies with cudaErrorMemoryAllocation on a shared 8 GB GPU (observed
+  # 2026-09-20 → monomer never finished). Forcing the CPU keeps local DFT
+  # reproducible; the cluster build is CPU-only anyway.
+  device: "cpu"
+  fit_basis: "jy"
+  ecutwfc: 150
+  ecutjy: 100
+  bessel_nao_rcut: [9, 10]
+  primitive_type: "reduced"
+
+  smearing_method: "gauss"
+  smearing_sigma: "0.02"
+  mixing_type: "broyden"
+  mixing_beta: 0.4
+  mixing_ndim: 12
+
+  spill_guess: "atomic"
+  optimizer: "scipy.bfgs"
+  torch.lr: 0.001
+  max_steps: 10000
+  nthreads_rcut: 4
+
+  geoms:
+    - proto: "dimer"
+      pertkind: "stretch"
+      pertmags: "auto"
+      nbands: 40
+      nspin: 1
+      lmaxmax: 4
+      celldm: 35
+
+  orbitals:
+    - nzeta: [3, 2, 2, 1, 0]
+      geoms: [0]
+      nbands: "occ"
+      checkpoint: null
+
+    - nzeta: [4, 3, 2, 2, 1]
+      geoms: [0]
+      nbands: "occ*2"
+      checkpoint: 0
+      fix_components:
+        - []
+        - []
+        - []
+        - []
+        - [0]
+      # SIAB reads these two *only* from ``model_kwargs``; written flat they
+      # are silently ignored (see parameters/orbgen/test.yml).
+      model_kwargs:
+        lloc_min: 4
+        vloc_aux: "/home/liguozhou/abacus/calculations/orbgen/project/pseudo/U.pbe-n-nc.14ve.UPF"
+
+# Same (complete) smoke-test config as parameters/orbgen/test.yml, repeated here
+# so the flat form ("parameters": {"orbgen": "test"}) works too. YAML cannot
+# alias across files, hence the duplication.
+test:
+  element: "U"
+  environment: "ulimit -l unlimited 2>/dev/null; export PATH=/home/liguozhou/install/miniconda3/envs/orbgen/bin:$PATH; export LD_LIBRARY_PATH=/home/liguozhou/install/miniconda3/envs/orbgen/lib:$LD_LIBRARY_PATH; export UCX_TLS=tcp,self,sm; export OMP_NUM_THREADS=1"
+  mpi_command: "mpirun -np 24 --bind-to numa"
+  abacus_command: "abacus"
+
+  # The local `abacus` (conda env `orbgen`) is a CUDA build: with
+  # `mpirun -np 24` every rank tries cudaMalloc for its GINT buffers and the
+  # run dies with cudaErrorMemoryAllocation on a shared 8 GB GPU (observed
+  # 2026-09-20 → monomer never finished). Forcing the CPU keeps local DFT
+  # reproducible; the cluster build is CPU-only anyway.
+  device: "cpu"
+  fit_basis: "jy"
+  ecutwfc: 150
+  ecutjy: 100
+  bessel_nao_rcut: [9, 10]
+  primitive_type: "reduced"
+
+  smearing_method: "gauss"
+  smearing_sigma: "0.02"
+  mixing_type: "broyden"
+  mixing_beta: 0.4
+  mixing_ndim: 12
+
+  spill_guess: "atomic"
+  optimizer: "scipy.bfgs"
+  torch.lr: 0.001
+  max_steps: 10000
+  nthreads_rcut: 4
+
+  geoms:
+    - proto: "dimer"
+      pertkind: "stretch"
+      pertmags: "auto"
+      nbands: 40
+      nspin: 1
+      lmaxmax: 4
+      celldm: 35
+
+  orbitals:
+    - nzeta: [3, 2, 2, 1, 0]
+      geoms: [0]
+      nbands: "occ"
+      checkpoint: null
+
+    - nzeta: [4, 3, 2, 2, 1]
+      geoms: [0]
+      nbands: "occ*2"
+      checkpoint: 0
+      fix_components:
+        - []
+        - []
+        - []
+        - []
+        - [0]
+      # SIAB reads these two *only* from ``model_kwargs``; written flat they
+      # are silently ignored (see parameters/orbgen/test.yml).
+      model_kwargs:
+        lloc_min: 4
+        vloc_aux: "/home/liguozhou/abacus/calculations/orbgen/project/pseudo/U.pbe-n-nc.14ve.UPF"

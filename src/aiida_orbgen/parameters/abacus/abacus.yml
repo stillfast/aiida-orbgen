@@ -1,0 +1,60 @@
+# ---------------------------------------------------------------------------
+# parameters/abacus/abacus.yml
+#
+# ABACUS-side presets for `aiida-orbgen run -i input.json`.
+#
+# Selected from input.json in three equivalent ways:
+#
+#   "parameters": {"abacus": "u_14ve"}            # this file, preset u_14ve
+#   "parameters": {"abacus": ["test", "u_14ve"]}  # two presets, two WorkChains
+#   "parameters": {"abacus": {"test": "test"}}    # parameters/abacus/test.yml
+#
+# A preset may spell its parameters flat (as below) or nested under an
+# "abacus:" key (exactly like abacus.json). The loader canonicalises both into
+#
+#   {"basis": [...],
+#    "abacus": {"code": ..., "parameters": {"input": {...}},
+#               "metadata": {"options": {...}}},
+#    "tolerance_meV": ...}
+#
+# Scheduler options come from `static.metadata` (parameters/metadata.yml) and
+# are merged with — and overridden by — the "metadata.options" written here.
+# ---------------------------------------------------------------------------
+
+# Minimal smoke-test preset: the two bases the ΔE comparison needs, one solver
+# override, a small retry cap. ABACUS INPUT values (ecutwfc / smearing /
+# mixing / out_mat_*) belong to the orbgen preset — the SIAB pipeline writes
+# them into INPUT, and `parameters.input` here only overrides what the ABACUS
+# job itself should own. Never put SIAB-only keys (`ecutjy`, `vloc_aux`, …)
+# here: ABACUS refuses the whole INPUT ("Bad parameter"). See
+# parameters/abacus/test.yml for the same preset as a standalone file.
+test:
+  basis: [pw, lcao_nsw]
+  parameters:
+    input:
+      ks_solver: scalapack_gvx
+    max_iterations: 4
+  tolerance_meV: 4.2
+
+# Production preset for the 14-valence-electron uranium pseudopotential
+# (U.pbe-n-nc.14ve.UPF). `max_l_max` / `max_r_cut` cap the candidate grid that
+# the orbgen preset contributes.
+u_14ve:
+  basis: [pw, lcao_nsw]
+  parameters:
+    input:
+      ks_solver: scalapack_gvx
+    max_iterations: 4
+  tolerance_meV: 4.2
+  max_l_max: 5
+  max_r_cut: 12
+  metadata:
+    options:
+      resources:
+        num_machines: 1
+        num_mpiprocs_per_machine: 56
+        tot_num_mpiprocs: 56
+      max_wallclock_seconds: 7200
+      max_memory_kb: 384000000
+      queue_name: q_ysuan
+      withmpi: true

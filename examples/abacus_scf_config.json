@@ -1,0 +1,43 @@
+{
+  "profile": "default",
+  "workchain": "abacus.base",
+  "code": "abacus_lts@yeesuan",
+  "pseudo_family": "apns-eff-fam",
+
+  "input_params": {
+    "symmetry": 1,
+    "basis_type": "lcao",
+    "ecutwfc": 100,
+    "scf_thr": 1e-7,
+    "scf_nmax": 100,
+    "device": "cpu",
+    "precision": "double"
+  },
+
+  "structure_file": "/home/liguozhou/abacus/calculations/orbgen/project/pbe/U-dimer-1.89-9au/STRU",
+
+  "kpoints_mesh": [4, 4, 4],
+  "kpoints_offset": [0, 0, 0],
+
+  "label": "abacus-scf-test",
+  "description": "Test job submission with the aiida_abacus plugin",
+
+  "metadata": {
+    "options": {
+      "resources": {
+        "num_machines": 1,
+        "num_mpiprocs_per_machine": 56,
+        "tot_num_mpiprocs": 56
+      },
+      "max_wallclock_seconds": 600,
+      "queue_name": "q_ysuan",
+      "scheduler_stderr": "error.log",
+      "scheduler_stdout": "output.log",
+      "max_memory_kb": 50331648,
+      "withmpi": true
+    }
+  },
+
+  "dry_run": true,
+  "output_dir": "./dry_run_submissions"
+}

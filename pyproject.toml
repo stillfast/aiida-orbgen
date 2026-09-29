@@ -1,0 +1,110 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiida-orbgen"
+dynamic = ["version"]
+description = "AiiDA plugin for ABACUS orbital generation (ABACUS-CSW-NAO)"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+keywords = ["aiida", "abacus", "orbital", "csw-nao", "dft"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Framework :: AiiDA",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "aiida-core>=2.0",
+    "numpy",
+    "pydantic>=2.0",
+    "pyyaml",
+]
+
+[project.scripts]
+# Top-level CLI: install via `pip install -e .` then use `aiida-orbgen`.
+aiida-orbgen = "aiida_orbgen.cli.run:main"
+
+[project.entry-points."aiida.data"]
+# Custom data node entry points (optional, AiiDA picks them up automatically
+# by class path; listing here makes them discoverable from any process).
+"aiida_orbgen.incar" = "aiida_orbgen.data.input:IncarData"
+
+[project.entry-points."aiida.workflows"]
+# 两级 workchain 架构 (flowchart)
+"orbgen.calc"   = "aiida_orbgen.workflows.batch:OrbgenCalcWorkChain"
+"orbgen.gridsearch" = "aiida_orbgen.workflows.batch:OrbgenGridSearchWorkChain"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy",
+    "pre-commit",
+    "sphinx",
+    "sphinx-aiida-theme",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/aiida-orbgen"
+Documentation = "https://github.com/yourusername/aiida-orbgen#readme"
+Repository = "https://github.com/yourusername/aiida-orbgen"
+Issues = "https://github.com/yourusername/aiida-orbgen/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+# The preset tree read by `aiida-orbgen run` (`parameters/`) and the JSON
+# examples shipped with the package must travel with a wheel install too.
+[tool.setuptools.package-data]
+"aiida_orbgen" = [
+  "parameters/*.yml",
+  "parameters/*/*.yml",
+  "static/examples/*.json",
+]
+
+[tool.setuptools.dynamic.version]
+attr = "aiida_orbgen.__version__"
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.coverage.run]
+source = ["aiida_orbgen"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+]

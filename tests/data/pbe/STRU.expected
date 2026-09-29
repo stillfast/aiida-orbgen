@@ -1,0 +1,19 @@
+ATOMIC_SPECIES
+U 1.000000 U.pbe-n-nc.upf
+
+NUMERICAL_ORBITAL
+U_gga_9au_100Ry_27s27p26d26f25g.orb
+
+LATTICE_CONSTANT
+30.000000  // add lattice constant(a.u.)
+LATTICE_VECTORS
+1.00000000 0.00000000 0.00000000
+0.00000000 1.00000000 0.00000000
+0.00000000 0.00000000 1.00000000
+ATOMIC_POSITIONS
+Cartesian_angstrom_center_xyz  //Cartesian or Direct coordinate.
+U      //Element Label
+0.00     //starting magnetism
+2       //number of atoms
+7.93765873 7.93765873 7.93765873 0 0 0
+7.93765873 7.93765873 9.82765873 0 0 0

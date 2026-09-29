@@ -1,0 +1,36 @@
+{
+    "basis": ["pw", "lcao_nsw"],
+    "abacus":{
+        "code": "abacus_lts@yeesuan",
+        "parameters": {
+            "input": {
+                "ecutwfc": 100,
+                "nbands": 40,
+                "ks_solver": "scalapack_gvx",
+                "mixing_type": "broyden",
+                "mixing_beta": 0.4,
+                "scf_thr": 1e-7,
+                "smearing_method": "gauss",
+                "smearing_sigma": 0.02,
+                "nspin": 1
+            }
+        },
+        "metadata": {
+            "options":{
+                    "resources": {
+                        "num_machines": 1,
+                        "num_mpiprocs_per_machine": 56,
+                        "tot_num_mpiprocs": 56
+                    },
+                    "max_wallclock_seconds": 600, 
+                    "queue_name": "q_ysuan",
+                    "scheduler_stderr": "error.log",
+                    "scheduler_stdout": "output.log",
+                    "max_memory_kb": 384000000,
+                    "withmpi": true
+                },
+                "label": "abacus-scf-test",
+                "description": "Test job submission with the aiida_abacus plugin"
+            }
+    }
+}

@@ -1,0 +1,30 @@
+INPUT_PARAMETERS
+suffix               ABACUS
+stru_file            STRU
+kpoint_file          KPT
+wannier_card         INPUTw
+pseudo_dir           /home/liguozhou/abacus/calculations/orbgen/pbe
+calculation          scf
+basis_type           lcao
+ecutwfc              150
+ks_solver            genelpa
+nbands               40
+scf_thr              1.0e-7
+scf_nmax             9000
+smearing_method      gauss
+smearing_sigma       0.02
+mixing_type          broyden
+mixing_beta          0.4
+mixing_ndim          12
+mixing_gg0           0
+ntype                1
+nspin                1
+lmaxmax              4
+bessel_nao_rcut      9
+gamma_only           1
+printe               1
+out_chg              -1
+out_mat_hs           1 12
+out_mat_tk           1 12
+out_wfc_lcao         1
+orbital_dir          /home/liguozhou/abacus/calculations/orbgen/pbe/primitive_jy

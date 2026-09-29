@@ -1,0 +1,29 @@
+# ---------------------------------------------------------------------------
+# parameters/abacus/test.yml
+#
+# Smoke-test ABACUS preset, selected by the reference input.json through the
+# dict form:  "parameters": {"abacus": {"test": "test"}}
+#
+# What belongs here: only parameters the *ABACUS job* should own on top of the
+# INPUT that the SIAB pipeline already generated (pseudo_dir / basis_type /
+# ecutwfc / smearing / mixing / out_mat_* all come from the orbgen preset).
+#
+# What must NOT be here:
+#   * SIAB-only keys (`ecutjy`, `vloc_aux`, …) — they are read by
+#     `generate_nsw`/SIAB, not by ABACUS. ABACUS 3.10.0 aborts with
+#     "THE PARAMETER NAME 'ecutjy' IS NOT USED! ... Bad parameter", which is
+#     exactly how the 2026-09-19 run failed (every AbacusCalculation Excepted
+#     → AbacusBaseWorkChain 301 → OrbgenCalcWorkChain 303 → grid 301).
+#   * AiiDA-managed keys (pseudo_dir, suffix, stru_file, calculation,
+#     basis_type, bessel_nao_rcut, …): the workchain drops them silently.
+# `validate_abacus_input()` in aiida_orbgen.utils.config enforces both.
+#
+# (An earlier spelling of this file used a `{...}` flow mapping that PyYAML
+# could not parse; values are unchanged apart from dropping the SIAB-only
+# `ecutjy` and the duplicated SIAB values.)
+# ---------------------------------------------------------------------------
+test:
+  parameters:
+    input:
+      ks_solver: scalapack_gvx
+    max_iterations: 4

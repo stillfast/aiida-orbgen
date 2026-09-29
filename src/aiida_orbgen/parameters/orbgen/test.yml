@@ -1,0 +1,85 @@
+# ---------------------------------------------------------------------------
+# parameters/orbgen/test.yml
+#
+# Smoke-test SIAB (ABACUS-CSW-NAO) preset, selected by the reference input.json
+# through the dict form:  "parameters": {"orbgen": {"test": "test"}}
+#
+# This must be a *complete* orbgen.json: the AiiDA-side SIAB pipeline
+# (`aiida_orbgen.interfaces.generate_all_from_json`) requires `element`,
+# `bessel_nao_rcut`, `ecutjy` and `geoms`. Without `ecutjy` the pipeline dies
+# with `KeyError: 'ecutjy'` inside `generate_nsw` — which is exactly what
+# happened to OrbgenCalcWorkChain<412609>/<412615> (`run_siab_pipeline`
+# Excepted → exit 403). `ecutwfc` is what the ABACUS INPUT uses; SIAB's
+# `environment` / `mpi_command` / `abacus_command` are only needed when SIAB
+# itself launches ABACUS (`report --force-final-orbital`).
+#
+# `pseudo_dir` is deliberately absent: `aiida-orbgen run` injects it from
+# `static.pseudo_path` of input.json, so one preset works with any
+# pseudopotential.
+# ---------------------------------------------------------------------------
+test:
+  element: "U"
+  environment: "ulimit -l unlimited 2>/dev/null; export PATH=/home/liguozhou/install/miniconda3/envs/orbgen/bin:$PATH; export LD_LIBRARY_PATH=/home/liguozhou/install/miniconda3/envs/orbgen/lib:$LD_LIBRARY_PATH; export UCX_TLS=tcp,self,sm; export OMP_NUM_THREADS=1"
+  mpi_command: "mpirun -np 24 --bind-to numa"
+  abacus_command: "abacus"
+
+  # The local `abacus` (conda env `orbgen`) is a CUDA build: with
+  # `mpirun -np 24` every rank tries cudaMalloc for its GINT buffers and the
+  # run dies with cudaErrorMemoryAllocation on a shared 8 GB GPU (observed
+  # 2026-09-20 → monomer never finished). Forcing the CPU keeps local DFT
+  # reproducible; the cluster build is CPU-only anyway.
+  device: "cpu"
+  fit_basis: "jy"
+  ecutwfc: 150
+  ecutjy: 150
+  bessel_nao_rcut: [9, 10]
+  primitive_type: "reduced"
+
+  smearing_method: "gauss"
+  smearing_sigma: "0.02"
+  mixing_type: "broyden"
+  mixing_beta: 0.4
+  mixing_ndim: 12
+
+  spill_guess: "atomic"
+  optimizer: "scipy.bfgs"
+  torch.lr: 0.001
+  max_steps: 10000
+  nthreads_rcut: 4
+
+  geoms:
+    - proto: "dimer"
+      pertkind: "stretch"
+      pertmags: "auto"
+      nbands: 40
+      nspin: 1
+      lmaxmax: 4
+      celldm: 35
+
+  orbitals:
+    - nzeta: [3, 2, 2, 1, 0]
+      geoms: [0]
+      nbands: "occ"
+      checkpoint: null
+
+    - nzeta: [4, 3, 2, 2, 1]
+      geoms: [0]
+      nbands: "occ*2"
+      checkpoint: 0
+      fix_components:
+        - []
+        - []
+        - []
+        - []
+        - [0]
+      # SIAB reads vloc_aux / lloc_min *only* from ``model_kwargs``
+      # (SIAB/orb/orb_jy.py: `kwargs['model_kwargs'].get('vloc_aux')`;
+      #  orbital_model_required_keys['atomic'] = [jobdir, vloc_aux, lloc_min]).
+      # Written flat they are silently ignored — the f/g shells then fall back
+      # to the plain atomic initialization. Verified against a spillage log:
+      # the nested form prints
+      #   model_kwargs: {'jobdir': 'U-monomer-10au', 'vloc_aux': …,
+      #                  'lloc_min': 4}
+      model_kwargs:
+        lloc_min: 4
+        vloc_aux: "/home/liguozhou/abacus/calculations/orbgen/project/pseudo/U.pbe-n-nc.14ve.UPF"

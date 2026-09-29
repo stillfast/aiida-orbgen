@@ -1,0 +1,10 @@
+yeesuan:
+  options:
+    resources:
+      num_machines: 1
+      num_mpiprocs_per_machine: 56
+      tot_num_mpiprocs: 56
+    max_wallclock_seconds: 7200
+    max_memory_kb: 189440000
+    queue_name: "q_ysuan"
+    withmpi: true
