@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
 
 from aiida_orbgen.cli._common import plan_runs
 from aiida_orbgen.cli.run import main
@@ -546,6 +547,46 @@ def test_resolve_dft_root_searches_one_level_down(tmp_path):
     assert root9 == parent / "run_lmax4_rcut9"
     assert root10 == parent / "run_lmax4_rcut10"
     assert "run_lmax4_rcut9" in origin9 and "run_lmax4_rcut10" in origin10
+
+
+def test_primitive_export_falls_back_to_the_reference_tree(tmp_path):
+    """The recorded `orb_path` points at the submitting machine's scratch dir.
+
+    `/tmp/test_orbgen_output/...` is usually gone by the time a report runs, so
+    the primitive has to be found where SIAB actually wrote it: inside the
+    reference-DFT tree that the spillage step uses.
+    """
+    from aiida_orbgen.utils.report.orbitals import export_primitive_orbitals
+
+    name = "U_gga_10au_150Ry_37s37p36d36f36g.orb"
+    root = tmp_path / "run_lmax4_rcut10"
+    (root / "primitive_jy").mkdir(parents=True)
+    (root / "primitive_jy" / name).write_text("primitive orbital\n")
+
+    point = GridPoint(
+        l_max=4, r_cut=10.0, pk=410517, exit_status=304, finished_ok=False,
+        process_state="finished",
+        siab_info={
+            "nsw_filename": name,
+            "orb_path": "/tmp/test_orbgen_output/lmax4_rcut10p0/primitive_jy/" + name,
+            "family_label": "siab-u-nr-pbe-z14-nsw-10au-150Ry-g",
+        },
+    )
+    summary = SimpleNamespace(grid=[point])
+
+    # without a search root there is nothing to fall back to ...
+    files, warnings = export_primitive_orbitals(summary, tmp_path / "out")
+    assert files == []
+    assert any("no .orb found in AiiDA" in w for w in warnings)
+
+    # ... with one, the reference tree supplies the file
+    files, warnings = export_primitive_orbitals(
+        summary, tmp_path / "out2", search_roots=[root]
+    )
+    assert [f.path.name for f in files] == [name]
+    assert files[0].kind == "primitive"
+    assert files[0].source.startswith("filesystem:")
+    assert (tmp_path / "out2" / name).read_text().startswith("primitive orbital")
 
 
 def test_resolve_dft_root_prefers_the_per_point_mapping(tmp_path):

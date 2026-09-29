@@ -25,6 +25,7 @@ from aiida_orbgen.utils.report.orbitals import (
     dft_root_from_input_json,
     export_primitive_orbitals,
     generate_final_orbital,
+    resolve_dft_root,
 )
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "generate_final_orbital",
     "choose_point_for_dft_root",
     "dft_root_from_input_json",
+    "resolve_dft_root",
     "generate_one_report",
 ]
 
@@ -111,8 +113,17 @@ def generate_one_report(
     warnings: list[str] = []
     if export_orbitals and summary.grid:
         export_dir = output_dir / primitive_subdir if primitive_subdir else output_dir
+        # Reference trees keep the primitive `primitive_jy/<name>.orb`, and they
+        # are what survives when the submitting machine's scratch dir is gone.
+        roots: list[Path] = []
+        for grid_point in summary.grid:
+            root, _ = resolve_dft_root(
+                grid_point, None, input_json=input_json, dft_root=dft_root
+            )
+            if root not in roots:
+                roots.append(root)
         orbital_files, warnings = export_primitive_orbitals(
-            summary, export_dir, include_upf=include_upf
+            summary, export_dir, include_upf=include_upf, search_roots=roots
         )
 
     # One spillage run per grid point, so a bare `report -i output.json -o ./`

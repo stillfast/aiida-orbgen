@@ -146,8 +146,16 @@ def export_primitive_orbitals(
     out_dir: str | Path,
     *,
     include_upf: bool = False,
+    search_roots: list[str | Path] | None = None,
 ) -> tuple[list[OrbitalFile], list[str]]:
     """Export the primitive ``.orb`` (one per grid point) into ``out_dir``.
+
+    Sources are tried in order: the AiiDA repository (``AtomicOrbitalData``),
+    then the paths recorded when the run was submitted, then ``search_roots`` —
+    reference-DFT trees, where SIAB writes the primitive into ``primitive_jy/``.
+    The last one matters because the recorded paths point at the scratch
+    directory of the submitting machine (``/tmp/test_orbgen_output/...``), which
+    is usually gone; the reference tree is the copy that survives.
 
     Returns ``(files, warnings)`` — warnings are human-readable lines the CLI
     can print, so a missing orbital never aborts the report.
@@ -217,7 +225,13 @@ def export_primitive_orbitals(
 
         # 2) Filesystem fallback (SIAB wrote the primitive orbital locally)
         if not written:
-            for candidate in (info.get("orb_path"), info.get("nsw")):
+            candidates: list[str | Path] = [info.get("orb_path"), info.get("nsw")]
+            if orb_name:
+                for root in search_roots or []:
+                    root = Path(root)
+                    candidates.append(root / "primitive_jy" / orb_name)
+                    candidates.append(root / point_dir_name(point) / "primitive_jy" / orb_name)
+            for candidate in candidates:
                 if not candidate:
                     continue
                 source_path = Path(candidate)
@@ -237,10 +251,13 @@ def export_primitive_orbitals(
                 break
 
         if not written:
+            looked = [str(p) for p in (search_roots or [])]
             warnings.append(
                 f"grid point <{point.pk}> (l_max={point.l_max}, r_cut={point.r_cut}): "
-                f"no .orb found in AiiDA (family {family_label!r}) and "
+                f"no .orb found in AiiDA (family {family_label!r}), "
                 f"{info.get('orb_path')!r} is not on this filesystem"
+                + (f", and no primitive_jy/{orb_name} under {looked}" if looked else
+                   " (pass --dft-root to also look inside the reference tree)")
             )
 
     return files, warnings
@@ -679,14 +696,10 @@ def generate_final_orbital(
     calc_node = orm.load_node(point.pk)
 
     # ---- 3. SIAB config ---------------------------------------------------
-    try:
-        stored = _build_siab_config(calc_node, point.l_max, point.r_cut)
-    except Exception as exc:  # noqa: BLE001
-        result["message"] = f"cannot recover the SIAB config: {exc}"
-        return result
-
-    config = stored
-    config_source = "stored on the node (siab_json)"
+    # An explicit ``--siab-json`` short-circuits everything else: reading the
+    # copy stored on the node needs the AiiDA repository (an object store that
+    # may be unavailable, e.g. read-only mounts), and there is no reason for
+    # that to abort a run whose config the caller just supplied.
     notices: list[str] = []
     if siab_config is not None:
         try:
@@ -696,7 +709,16 @@ def generate_final_orbital(
             result["message"] = f"cannot read --siab-json {siab_config}: {exc}"
             return result
         config_source = f"--siab-json {siab_config}"
-    elif not use_stored_config:
+    else:
+        try:
+            stored = _build_siab_config(calc_node, point.l_max, point.r_cut)
+        except Exception as exc:  # noqa: BLE001
+            result["message"] = f"cannot recover the SIAB config: {exc}"
+            return result
+        config = stored
+        config_source = "stored on the node (siab_json)"
+
+    if siab_config is None and not use_stored_config:
         fresh, reason = load_preset_config(input_json, point.l_max, point.r_cut)
         stored_problem = None
         try:
