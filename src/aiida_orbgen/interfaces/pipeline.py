@@ -49,15 +49,13 @@ def _resolve_pertmags(
     5. fallback: call SIAB's ``_build_pert(pertmags='auto')`` for the default
        bond lengths
 
-    A monomer has no bond length at all: SIAB's ``dft_folder`` ignores the
-    perturbation for one atom, so a single job is generated (the perturbation is
-    only there to satisfy the folder-name helper).
+    ``geoms`` cannot list a ``monomer``: SIAB's ``GeomAssert`` only accepts
+    dimer/trimer/square/tetrahedron/octahedron/cube there, and the monomer of the
+    ``atomic`` initial guess is a job SIAB appends by itself (mirrored by
+    :func:`generate_all`).
 
     No "automatic" path hard-codes numbers in the interface layer.
     """
-    if geom is not None and geom.get("proto") == "monomer":
-        return [0.0]
-
     if override is not None:
         return [float(p) for p in override]
     if bond_length is not None:
@@ -248,6 +246,49 @@ def generate_all(
                 "folder": folder,
                 "pert": pert,
                 "proto": geom_proto,
+                "input": os.path.abspath(input_path),
+                "stru": os.path.abspath(stru_path),
+            })
+
+    # 4. The `atomic` initial guess needs a *monomer* reference, and SIAB adds that job
+    #    itself (SIAB/abacus/api.py:build_abacus_jobs appends proto='monomer' with
+    #    nbands=69 when spill_guess == 'atomic').  `geoms` cannot name it -- SIAB's
+    #    GeomAssert only accepts dimer/trimer/square/tetrahedron/octahedron/cube -- so
+    #    it is appended here: the workflow then computes it as an ordinary child, its
+    #    data comes back through AiiDA, and SIAB finds a *completed* folder instead of
+    #    either crashing on the missing `OUT.<suffix>/INPUT` (2026-09-30) or running
+    #    that DFT on whatever machine executes `report`.
+    if str(json_config.get("spill_guess", "atomic")) == "atomic":
+        monomer_folder = dft_folder_name(elem, "monomer", 0.0, rcut=rcut_for_folder)
+        if monomer_folder not in seen_folders:
+            seen_folders.add(monomer_folder)
+            dft_root = os.path.join(output_root, monomer_folder)
+            os.makedirs(dft_root, exist_ok=True)
+            # SIAB passes nbands=69 for this job specifically (`param_specific`); it is
+            # what the atomic guess indexes its bands against, so it must not inherit
+            # the dimers' value.
+            monomer_config = dict(json_config)
+            monomer_config["nbands"] = int(
+                json_config.get("__iop_spill_guess_atomic_nbands__", 69)
+            )
+            input_path = generate_incar(
+                monomer_config,
+                output_path=os.path.join(dft_root, "INPUT"),
+            )
+            geom0 = geom_entries[0] or {}
+            stru_path = generate_stru(
+                json_config,
+                output_path=os.path.join(dft_root, "STRU"),
+                proto="monomer",
+                bond_length=0.0,
+                nspin=geom0.get("nspin", nspin),
+                lattice_constant=geom0.get("celldm", lattice_constant),
+                orb_filename=orb_filename,
+            )
+            dft_results.append({
+                "folder": monomer_folder,
+                "pert": 0.0,
+                "proto": "monomer",
                 "input": os.path.abspath(input_path),
                 "stru": os.path.abspath(stru_path),
             })

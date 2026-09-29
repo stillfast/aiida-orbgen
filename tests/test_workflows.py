@@ -503,31 +503,30 @@ def _tiny_siab_config(root: Path) -> Path:
 #  reference geometries: every `geoms` entry becomes a job, including the monomer
 # ---------------------------------------------------------------------------
 def _reference_config(**geom_overrides) -> dict:
-    monomer = {"proto": "monomer", "pertkind": "stretch", "pertmags": "auto",
-               "nbands": 40, "nspin": 1, "lmaxmax": 4, "celldm": 35}
-    monomer.update(geom_overrides)
+    """A SIAB config with one dimer reference (what `geoms` may contain)."""
+    dimer = {"proto": "dimer", "pertkind": "stretch", "pertmags": [2.4, 2.75],
+             "nbands": 40, "nspin": 1, "lmaxmax": 4, "celldm": 35}
+    dimer.update(geom_overrides)
     return {
         "element": "U",
         "pseudo_dir": "/tmp/U.pbe-n-nc.UPF",
         "ecutwfc": 150, "ecutjy": 100,
         "bessel_nao_rcut": [10], "primitive_type": "reduced", "fit_basis": "jy",
-        "geoms": [
-            {"proto": "dimer", "pertkind": "stretch", "pertmags": [2.4, 2.75],
-             "nbands": 40, "nspin": 1, "lmaxmax": 4, "celldm": 35},
-            monomer,
-        ],
+        "spill_guess": "atomic",
+        "geoms": [dimer],
     }
 
 
 @requires_siab
-def test_generate_all_expands_every_geometry_entry(tmp_path):
-    """A dimer-only expansion leaves SIAB's spillage step without its monomer.
+def test_generate_all_mirrors_the_monomer_job_siab_adds(tmp_path):
+    """SIAB's spillage step needs a monomer reference, and SIAB builds that job itself.
 
-    ``SIAB/driver/main.py`` sets ``model_kwargs['jobdir'] = dft_folder(elem,
-    'monomer', 0, rcut=...)`` for the ``atomic`` initial guess, so the monomer
-    reference has to be one of the jobs — otherwise the final-orbital step dies with
-    ``FileNotFoundError: 'U-monomer-10au/OUT.ABACUS/INPUT'`` after every child has
-    been paid for (2026-09-30).
+    `SIAB/abacus/api.py:build_abacus_jobs` appends `proto='monomer'` with `nbands=69`
+    when `spill_guess == 'atomic'`, and `SIAB/driver/main.py` then initialises the
+    orbitals from `model_kwargs['jobdir'] = U-monomer-<rcut>au`.  `geoms` cannot name it
+    (SIAB's `GeomAssert` rejects `monomer`), so `generate_all` appends it — otherwise the
+    final-orbital step dies with `FileNotFoundError: 'U-monomer-10au/OUT.ABACUS/INPUT'`
+    after the whole grid has been paid for (2026-09-30).
     """
     from aiida_orbgen.interfaces.pipeline import generate_all
 
@@ -541,19 +540,33 @@ def test_generate_all_expands_every_geometry_entry(tmp_path):
     monomer = result["dft"][-1]
     assert monomer["proto"] == "monomer"
     assert os.path.isfile(monomer["input"]) and os.path.isfile(monomer["stru"])
+    # nbands=69 is what the atomic guess indexes its bands against — not the dimers' 40
+    text = Path(monomer["input"]).read_text()
+    assert [line for line in text.splitlines() if line.split()[:1] == ["nbands"]][0].split()[1] == "69"
 
 
 @requires_siab
-def test_a_monomer_is_generated_once_whatever_its_pertmags(tmp_path):
-    """A monomer has no bond length, so ``auto``/lists must not multiply the job."""
+def test_no_monomer_job_without_the_atomic_guess(tmp_path):
     from aiida_orbgen.interfaces.pipeline import generate_all
 
-    for pertmags in ("auto", [2.0, 2.5], 3.0):
-        config = _reference_config(pertmags=pertmags)
-        result = generate_all(config, output_root=str(tmp_path / str(pertmags)), dr=0.05)
-        monomer_folders = [entry["folder"] for entry in result["dft"]
-                           if entry["proto"] == "monomer"]
-        assert monomer_folders == ["U-monomer-10au"]
+    config = _reference_config()
+    config["spill_guess"] = "random"
+    result = generate_all(config, output_root=str(tmp_path), dr=0.05)
+    assert [entry["proto"] for entry in result["dft"]] == ["dimer", "dimer"]
+
+
+@requires_siab
+def test_a_second_reference_geometry_is_expanded_too(tmp_path):
+    """`geoms` may list a dimer *and* a trimer; both are reference states."""
+    from aiida_orbgen.interfaces.pipeline import generate_all
+
+    config = _reference_config()
+    config["geoms"].append({"proto": "trimer", "pertkind": "stretch", "pertmags": [0.0],
+                            "nbands": 40, "nspin": 1, "lmaxmax": 4, "celldm": 35})
+    result = generate_all(config, output_root=str(tmp_path), dr=0.05)
+    protos = [entry["proto"] for entry in result["dft"]]
+    assert protos.count("dimer") == 2 and protos.count("trimer") == 1
+    assert len({entry["folder"] for entry in result["dft"]}) == len(protos)
 
 
 @requires_siab
@@ -561,7 +574,7 @@ def test_duplicate_geometry_entries_do_not_duplicate_jobs(tmp_path):
     from aiida_orbgen.interfaces.pipeline import generate_all
 
     config = _reference_config()
-    config["geoms"].append(dict(config["geoms"][1]))          # same monomer twice
+    config["geoms"].append(dict(config["geoms"][0]))          # same dimer twice
     result = generate_all(config, output_root=str(tmp_path), dr=0.05)
     folders = [entry["folder"] for entry in result["dft"]]
     assert len(folders) == len(set(folders))

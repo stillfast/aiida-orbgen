@@ -1313,6 +1313,21 @@ def test_spec_accepts_every_shipped_preset():
     assert seen >= 3
 
 
+def test_spec_rejects_a_monomer_reference_geometry():
+    """SIAB only accepts dimer/trimer/square/tetrahedron/octahedron/cube in `geoms`.
+
+    The monomer of the `atomic` initial guess is a *job* SIAB appends itself, mirrored
+    by `interfaces.pipeline.generate_all`; writing it into `geoms` makes SIAB abort
+    ("proto should be a file or one of the following: ...") at the very end of a report
+    run, after the whole grid has been paid for (2026-09-30).
+    """
+    config = dict(_COMPLETE_SIAB)
+    config["geoms"] = [dict(config["geoms"][0]),
+                       {**config["geoms"][0], "proto": "monomer", "pertmags": [0.0]}]
+    with pytest.raises(ValueError, match="geoms\\[1\\].proto='monomer'"):
+        validate_siab_config(config)
+
+
 def test_presets_shared_by_name_agree():
     """A preset name must mean the same thing in every shipped file.
 

@@ -171,6 +171,23 @@ class OrbgenSpec(BaseModel):
     def _check_consistency(self) -> "OrbgenSpec":
         problems: list[str] = []
 
+        # SIAB's GeomAssert accepts only these six prototypes (or a path to a
+        # structure file).  `monomer` in particular is NOT a reference geometry: the
+        # monomer the `atomic` initial guess needs is a job SIAB appends by itself
+        # (SIAB/abacus/api.py:build_abacus_jobs), and aiida-orbgen mirrors that job so
+        # its data comes from provenance.  Listing it here makes SIAB abort with
+        # "proto should be a file or one of the following: ..." — but only at the very
+        # end of a report run, after the grid has been paid for (2026-09-30), so it is
+        # rejected here instead.
+        for index, geom in enumerate(self.geoms):
+            if geom.proto == "monomer":
+                problems.append(
+                    f"geoms[{index}].proto='monomer' is not a SIAB reference geometry "
+                    f"(SIAB accepts dimer/trimer/square/tetrahedron/octahedron/cube, or "
+                    f"a structure file); the monomer that spill_guess='atomic' needs is "
+                    f"added automatically — drop that geoms entry"
+                )
+
         if any(rcut <= 0 for rcut in self.bessel_nao_rcut):
             problems.append(f"bessel_nao_rcut must be positive: {self.bessel_nao_rcut}")
 
