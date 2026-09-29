@@ -618,6 +618,40 @@ def choose_point_for_dft_root(summary, dft_root: str | Path):
     return None, status
 
 
+def _summarise_products(
+    work_dir: Path,
+    config: dict,
+    log_path: Path,
+    produced: list[Path],
+) -> dict:
+    """Quality of the products in ``work_dir``: scheme per l + spillage.
+
+    Used both after a fresh spillage run and on the ``already-present`` path, so
+    a re-run of ``report`` shows the same numbers instead of just file names.
+    """
+    schemes = [
+        orb.get("nzeta") for orb in (config.get("orbitals") or [])
+        if isinstance(orb.get("nzeta"), (list, tuple))
+    ]
+    out: dict = {}
+    checked = [validate_orbital(path, schemes) for path in produced
+               if path.suffix == ".orb"] if schemes else []
+    if checked:
+        out["validated"] = checked
+        bad = [item for item in checked if not item["ok"]]
+        if bad:
+            out["status"] = "invalid"
+            out["message"] = "; ".join(
+                f"{Path(item['file']).name}: {item.get('reason', 'invalid')}"
+                for item in bad
+            )
+    values = spillage_values(log_path)
+    if values:
+        out["spillage"] = values
+        out["spillage_last"] = values[-1]
+    return out
+
+
 def generate_final_orbital(
     summary,
     out_dir: str | Path,
@@ -878,6 +912,10 @@ def generate_final_orbital(
     if quarantined:
         result["quarantined"] = quarantined
 
+    # The log of the spillage run for this point. Defined here because the
+    # idempotency check below reports the *existing* products' quality from it.
+    log_path = work_dir / f"orbgen_{point_dir_name(point)}.log"
+
     # ---- 3c. make-style idempotency ---------------------------------------
     # Re-running ``report`` on an unchanged tree must not repeat a multi-minute
     # spillage: if the point's directory already holds orbital files that are
@@ -898,6 +936,16 @@ def generate_final_orbital(
         if newest_output >= newest_input:
             result["status"] = "already-present"
             result["files"] = [str(path) for path in work_outputs]
+            # Re-validating here is what keeps a re-run of `report` informative:
+            # the spillage value and the per-l scheme check must not depend on
+            # having just recomputed the orbitals.
+            summary_info = _summarise_products(work_dir, config, log_path, work_outputs)
+            # ``status`` describes what this invocation did ("nothing, it was
+            # already there"); a failed scheme check is reported separately so it
+            # cannot be mistaken for a skipped run.
+            if summary_info.pop("status", None) == "invalid":
+                result["validation_failed"] = summary_info.pop("message", "")
+            result.update(summary_info)
             result["message"] = (
                 f"{len(work_outputs)} orbital file(s) already up to date "
                 f"(older than the reference DFT) — pass --redo-final-orbital to "
@@ -907,7 +955,6 @@ def generate_final_orbital(
 
     environment = str(config.get("environment") or "").strip().rstrip(";")
     command = orbgen_command or "orbgen"
-    log_path = work_dir / f"orbgen_lmax{point.l_max}_rcut{point.r_cut:g}.log"
     # ``cd … && { env; } && orbgen …`` — the brace group keeps the exports in
     # the current shell (a subshell would lose PATH) while still aborting the
     # whole chain when ``cd`` fails.
@@ -982,26 +1029,7 @@ def generate_final_orbital(
     # 曾经出现过文件名写着 ``4s3p2d2f1g`` 而文件头 ``Number of Gorbital--> 0``
     # 的情况 (vloc_aux 写在 orbitals[i] 顶层被 SIAB 忽略), 只按扩展名是查不出来
     # 的, 所以这里把每个 .orb 读回来与请求的 nzeta 逐 l 对比.
-    schemes = [orb.get("nzeta") for orb in (config.get("orbitals") or [])
-               if isinstance(orb.get("nzeta"), (list, tuple))]
-    checked = [
-        validate_orbital(path, schemes)
-        for path in produced if path.suffix == ".orb"
-    ] if schemes else []
-    if checked:
-        result["validated"] = checked
-        bad = [item for item in checked if not item["ok"]]
-        if bad:
-            result["status"] = "invalid"
-            result["message"] = "; ".join(
-                f"{Path(item['file']).name}: {item.get('reason', 'invalid')}"
-                for item in bad
-            )
-
-    values = spillage_values(log_path)
-    if values:
-        result["spillage"] = values
-        result["spillage_last"] = values[-1]
+    result.update(_summarise_products(work_dir, config, log_path, produced))
 
     if returncode:
         try:

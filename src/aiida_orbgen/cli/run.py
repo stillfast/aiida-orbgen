@@ -292,6 +292,16 @@ def cmd_report(args) -> int:
         if result.orbital_files:
             print(f"      primitive : {len(result.orbital_files)} .orb -> "
                   f"{result.orbital_files[0].path.parent}")
+        bad_orbitals = [
+            entry for entry in (result.final_orbitals or [])
+            if entry.get("status") in ("failed", "timeout", "empty", "invalid")
+            or entry.get("validation_failed")
+        ]
+        for entry in bad_orbitals:
+            print(f"      ⚠ final orbital (l_max={entry.get('l_max')}, "
+                  f"r_cut={entry.get('r_cut')}): {entry.get('status')}"
+                  + (f" — {entry.get('validation_failed')}" if entry.get("validation_failed") else ""),
+                  file=sys.stderr)
         for warning in result.warnings:
             print(f"      warning   : {warning}", file=sys.stderr)
         for final in result.final_orbitals:

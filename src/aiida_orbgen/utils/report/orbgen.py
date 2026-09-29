@@ -632,6 +632,8 @@ def _render_tail(
             values = entry["spillage"]
             shown = ", ".join(f"{value:.6e}" for value in values)
             lines.append(f"- Spillage (converged): {shown}")
+        if entry.get("validation_failed"):
+            lines.append(f"- ❌ Orbital validation failed: {entry['validation_failed']}")
         if entry.get("message"):
             lines.append(f"- Note: {entry['message']}")
 
