@@ -153,6 +153,23 @@ def validate_siab_config(config: dict, *, source: str = "orbgen preset") -> list
     """
     from aiida_orbgen.spec import OrbgenSpec
 
+    # SIAB's `ParamAssert`/`OrbitalAssert` demand these four keys in *every* orbital
+    # entry (SIAB/io/param.py: ORBITAL_COMPULSORY_).  Our model fills the missing ones
+    # with defaults, so a config can pass here and still be rejected by SIAB — which
+    # only happens at the very end of `report`, after the whole grid has been computed
+    # (2026-09-30: "orbital 0 does not have all the compulsory keys").
+    required = ("nzeta", "geoms", "nbands", "checkpoint")
+    for index, orbital in enumerate(config.get("orbitals") or []):
+        if not isinstance(orbital, dict):
+            continue
+        missing = [key for key in required if key not in orbital]
+        if missing:
+            raise ValueError(
+                f"{source}: orbitals[{index}] is missing {missing}; SIAB requires all "
+                f"of {list(required)} (use `checkpoint: null` and `nbands: \"occ\"` if "
+                f"you mean the defaults)"
+            )
+
     flat = OrbgenSpec.flat_vloc_aux(config)
     if flat:
         raise ValueError(

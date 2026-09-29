@@ -173,7 +173,7 @@ def test_inline_siab_config_replaces_the_orbgen_preset(tmp_path):
         "bessel_nao_rcut": [10.0],
         "geoms": [{"proto": "dimer", "pertkind": "stretch", "pertmags": [2.2],
                    "lmaxmax": 4}],
-        "orbitals": [{"nzeta": [3, 2, 2, 1], "geoms": [0]}],
+        "orbitals": [_orbital(nzeta=[3, 2, 2, 1], geoms=[0])],
     }
     path = _write_input(
         tmp_path,
@@ -205,7 +205,7 @@ def test_inline_siab_config_without_the_orbgen_slot(tmp_path):
         "element": "U", "ecutjy": 150, "bessel_nao_rcut": [10.0],
         "geoms": [{"proto": "dimer", "pertkind": "stretch", "pertmags": [2.2],
                    "lmaxmax": 4}],
-        "orbitals": [{"nzeta": [3, 2, 2, 1], "geoms": [0]}],
+        "orbitals": [_orbital(nzeta=[3, 2, 2, 1], geoms=[0])],
     }
     path.write_text(json.dumps(payload))
 
@@ -232,7 +232,7 @@ def test_inline_siab_config_name_names_the_run_directory(tmp_path):
         "element": "U", "ecutjy": 150, "bessel_nao_rcut": [10.0],
         "geoms": [{"proto": "dimer", "pertkind": "stretch", "pertmags": [2.2],
                    "lmaxmax": 4}],
-        "orbitals": [{"nzeta": [3, 2, 2, 1], "geoms": [0]}],
+        "orbitals": [_orbital(nzeta=[3, 2, 2, 1], geoms=[0])],
     }
     path.write_text(json.dumps(payload))
 
@@ -351,6 +351,14 @@ def test_candidates_respect_the_max_caps():
 #  SIAB preset validation (the `KeyError: 'ecutjy'` failure mode)
 # ---------------------------------------------------------------------------
 
+def _orbital(**overrides) -> dict:
+    """A single orbital entry with SIAB's four compulsory keys (ORBITAL_COMPULSORY_)."""
+    orbital = {"nzeta": [3, 2, 2, 1, 0], "geoms": [0], "nbands": "occ",
+               "checkpoint": None}
+    orbital.update(overrides)
+    return orbital
+
+
 _COMPLETE_SIAB = {
     "element": "U",
     "ecutwfc": 150,
@@ -358,7 +366,7 @@ _COMPLETE_SIAB = {
     "bessel_nao_rcut": [9, 10],
     "geoms": [{"proto": "dimer", "pertkind": "stretch", "pertmags": "auto",
                "lmaxmax": 4}],
-    "orbitals": [{"nzeta": [3, 2, 2, 1, 0], "geoms": [0]}],
+    "orbitals": [_orbital()],
     "abacus_command": "abacus",
 }
 
@@ -415,14 +423,14 @@ def test_loader_rejects_an_incomplete_orbgen_preset(tmp_path, monkeypatch):
 def test_validate_siab_config_rejects_flat_vloc_aux():
     """SIAB only reads vloc_aux/lloc_min from `model_kwargs`; flat = ignored."""
     config = dict(_COMPLETE_SIAB)
-    config["orbitals"] = [{"nzeta": [4, 3, 2, 2, 1], "geoms": [0],
-                           "lloc_min": 4, "vloc_aux": "/tmp/U.UPF"}]
+    config["orbitals"] = [_orbital(nzeta=[4, 3, 2, 2, 1], geoms=[0],
+                                   lloc_min=4, vloc_aux="/tmp/U.UPF")]
     with pytest.raises(ValueError, match="model_kwargs"):
         validate_siab_config(config)
 
-    config["orbitals"] = [{"nzeta": [4, 3, 2, 2, 1], "geoms": [0],
-                           "model_kwargs": {"lloc_min": 4,
-                                            "vloc_aux": "/tmp/U.UPF"}}]
+    config["orbitals"] = [_orbital(nzeta=[4, 3, 2, 2, 1], geoms=[0],
+                                   model_kwargs={"lloc_min": 4,
+                                                 "vloc_aux": "/tmp/U.UPF"})]
     warnings = validate_siab_config(config)  # must not raise
     assert all("model_kwargs" not in warning for warning in warnings)
 
@@ -1265,28 +1273,28 @@ def test_spec_rejects_an_unreachable_nzeta_scheme():
     """The check that used to cost a full reference DFT before failing."""
     config = dict(_COMPLETE_SIAB)
     # r_cut=9, ecutjy=100, reduced gives 27 radial functions for l=0
-    config["orbitals"] = [{"nzeta": [28, 2, 2, 1, 0], "geoms": [0]}]
+    config["orbitals"] = [_orbital(nzeta=[28, 2, 2, 1, 0], geoms=[0])]
     with pytest.raises(ValueError, match="not reachable"):
         validate_siab_config(config)
 
-    config["orbitals"] = [{"nzeta": [27, 2, 2, 1, 0], "geoms": [0]}]
+    config["orbitals"] = [_orbital(nzeta=[27, 2, 2, 1, 0], geoms=[0])]
     assert validate_siab_config(config) is not None      # fits, only warnings
 
 
 def test_spec_rejects_nzeta_beyond_lmaxmax():
     config = dict(_COMPLETE_SIAB)
     # trailing zeros do not raise the requested l_max: [3,2,2,1,0,0] is still 3
-    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0, 0], "geoms": [0]}]
+    config["orbitals"] = [_orbital(nzeta=[3, 2, 2, 1, 0, 0], geoms=[0])]
     validate_siab_config(config)
     # a non-zero term at l=5 does (geoms[0].lmaxmax is 4)
-    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0, 1], "geoms": [0]}]
+    config["orbitals"] = [_orbital(nzeta=[3, 2, 2, 1, 0, 1], geoms=[0])]
     with pytest.raises(ValueError, match="lmaxmax"):
         validate_siab_config(config)
 
 
 def test_spec_rejects_a_geometry_index_that_does_not_exist():
     config = dict(_COMPLETE_SIAB)
-    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0], "geoms": [3]}]
+    config["orbitals"] = [_orbital(nzeta=[3, 2, 2, 1, 0], geoms=[3])]
     with pytest.raises(ValueError, match="geoms\\[3\\]"):
         validate_siab_config(config)
 
@@ -1294,8 +1302,8 @@ def test_spec_rejects_a_geometry_index_that_does_not_exist():
 def test_spec_rejects_unknown_orbital_keys():
     """Unknown keys would be ignored by SIAB; saying so beats dropping them."""
     config = dict(_COMPLETE_SIAB)
-    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0], "geoms": [0],
-                           "llocmin": 4}]                 # typo
+    config["orbitals"] = [_orbital(nzeta=[3, 2, 2, 1, 0], geoms=[0],
+                           llocmin=4)]                 # typo
     with pytest.raises(ValueError, match="llocmin"):
         validate_siab_config(config)
 
@@ -1326,6 +1334,23 @@ def test_spec_rejects_a_monomer_reference_geometry():
                        {**config["geoms"][0], "proto": "monomer", "pertmags": [0.0]}]
     with pytest.raises(ValueError, match="geoms\\[1\\].proto='monomer'"):
         validate_siab_config(config)
+
+
+def test_siab_compulsory_orbital_keys_are_required_here_too():
+    """SIAB rejects an orbital without `checkpoint`; catch it before the DFT runs.
+
+    2026-09-30: a hand-written scan config omitted `checkpoint` (and `nbands`), passed
+    `aiida-orbgen check`, ran a whole grid — and then `report` failed at the very last
+    step with "orbital 0 does not have all the compulsory keys".
+    """
+    config = dict(_COMPLETE_SIAB)
+    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0], "geoms": [0]}]   # not SIAB-complete
+    with pytest.raises(ValueError, match="missing .*checkpoint"):
+        validate_siab_config(config)
+
+    # the same orbital with SIAB's four keys is accepted
+    config["orbitals"] = [_orbital()]
+    validate_siab_config(config)
 
 
 def test_presets_shared_by_name_agree():
