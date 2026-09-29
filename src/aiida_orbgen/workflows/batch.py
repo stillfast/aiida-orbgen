@@ -89,6 +89,47 @@ __all__ = [
 # ===========================================================================
 
 
+def _validate_siab_json_inputs(inputs, report) -> str | None:
+    """Validate every SIAB config a WorkChain was handed.
+
+    Returns an error message (and reports warnings) or ``None``.  A WorkChain
+    submitted directly through ``WorkflowFactory`` never passes
+    ``ConfigLoader``, so without this the two classes of mistake that cost the
+    most time would only show up inside SIAB:
+
+    * an ``nzeta`` scheme the primitive basis cannot provide — discovered in
+      ``basistrans`` *after* the reference DFT has been paid for;
+    * ``vloc_aux`` / ``lloc_min`` written outside ``model_kwargs`` — silently
+      dropped, so a requested g channel comes out empty.
+    """
+    import json as _json
+
+    from aiida_orbgen.utils.config import validate_siab_config
+
+    nodes = []
+    if "siab_json" in inputs:
+        nodes.append(inputs.siab_json)
+    if "orbgen_jsons" in inputs:
+        nodes.extend(inputs.orbgen_jsons.get_list())
+    for node in nodes:
+        try:
+            content = node.get_content()
+            if isinstance(content, bytes):
+                content = content.decode("utf-8")
+            config = _json.loads(content)
+        except Exception as exc:  # noqa: BLE001 — unreadable JSON is a config error
+            return f"cannot read siab_json<{node.pk}>: {exc}"
+        try:
+            warnings = validate_siab_config(
+                config, source=f"siab_json<{node.pk}>"
+            )
+        except Exception as exc:  # noqa: BLE001 — ValueError from the validator
+            return str(exc)
+        for warning in warnings:
+            report(f"  WARNING: {warning}")
+    return None
+
+
 class OrbgenCalcWorkChain(WorkChain):
     """单个 (l_max, r_cut) 组合下, 跑 PW + LCAO:nsw 两组基组 × 5 结构 = 10 个任务。
 
@@ -195,6 +236,8 @@ class OrbgenCalcWorkChain(WorkChain):
                        message="Could not extract energies from outputs")
         spec.exit_code(304, "WARNING_TOLERANCE_EXCEEDED",
                        message="max |E_lcao_nsw - E_pw| exceeds tolerance (meV)")
+        spec.exit_code(406, "ERROR_INVALID_SIAB_CONFIG",
+                       message="siab_json is not a usable SIAB configuration")
 
         # ---- outline ----
         spec.outline(
@@ -246,6 +289,11 @@ class OrbgenCalcWorkChain(WorkChain):
             f"abacus.json: basis={self.ctx.abacus_cfg['basis']}, "
             f"tolerance_meV={self.ctx.abacus_cfg['tolerance_meV']}"
         )
+
+        problem = _validate_siab_json_inputs(self.inputs, self.report)
+        if problem:
+            self.report(f"ERROR: invalid SIAB config: {problem}")
+            return self.exit_codes.ERROR_INVALID_SIAB_CONFIG
         return None
 
     # ------------------------------------------------------------------
@@ -742,6 +790,9 @@ class OrbgenGridSearchWorkChain(WorkChain):
                    help="候选 l_max 列表 (升序排列). 与 orbgen_jsons 互斥.")
         spec.input("r_cut_candidates", valid_type=List, required=False,
                    help="候选 r_cut 列表 (升序排列, Å). 与 orbgen_jsons 互斥.")
+        spec.exit_code(406, "ERROR_INVALID_SIAB_CONFIG",
+                       message="a candidate siab_json is not a usable SIAB "
+                               "configuration")
         spec.input("candidates", valid_type=List, required=False,
                    help="显式候选列表 [[l_max, r_cut], ...] (非笛卡尔积), 用于只在已"
                         "扫过的网格上补点. 与 l_max_candidates/r_cut_candidates 互斥.")
@@ -885,6 +936,11 @@ class OrbgenGridSearchWorkChain(WorkChain):
                 f"l_max candidates = {self.ctx.l_max_list}, "
                 f"r_cut candidates = {self.ctx.r_cut_list}"
             )
+
+        problem = _validate_siab_json_inputs(self.inputs, self.report)
+        if problem:
+            self.report(f"ERROR: invalid SIAB config: {problem}")
+            return self.exit_codes.ERROR_INVALID_SIAB_CONFIG
 
         self.ctx.tolerance_meV = float(cfg.get("tolerance_meV", 4.2))
         self.ctx.search_strategy = str(

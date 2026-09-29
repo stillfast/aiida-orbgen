@@ -22,6 +22,7 @@ from aiida_orbgen.utils.cal_json import (
     default_result_path,
     write_cal_json,
 )
+from aiida_orbgen.spec import AbacusSpec, OrbgenSpec
 from aiida_orbgen.utils.config import (
     ConfigLoader,
     WORKFLOW_CALC,
@@ -242,12 +243,12 @@ def test_loader_rejects_an_incomplete_orbgen_preset(tmp_path, monkeypatch):
 def test_validate_siab_config_rejects_flat_vloc_aux():
     """SIAB only reads vloc_aux/lloc_min from `model_kwargs`; flat = ignored."""
     config = dict(_COMPLETE_SIAB)
-    config["orbitals"] = [{"nzeta": [4, 3, 2, 2, 1], "lloc_min": 4,
-                           "vloc_aux": "/tmp/U.UPF"}]
+    config["orbitals"] = [{"nzeta": [4, 3, 2, 2, 1], "geoms": [0],
+                           "lloc_min": 4, "vloc_aux": "/tmp/U.UPF"}]
     with pytest.raises(ValueError, match="model_kwargs"):
         validate_siab_config(config)
 
-    config["orbitals"] = [{"nzeta": [4, 3, 2, 2, 1],
+    config["orbitals"] = [{"nzeta": [4, 3, 2, 2, 1], "geoms": [0],
                            "model_kwargs": {"lloc_min": 4,
                                             "vloc_aux": "/tmp/U.UPF"}}]
     warnings = validate_siab_config(config)  # must not raise
@@ -1030,3 +1031,79 @@ def test_render_report_single_point_and_final_orbital():
     assert "### l_max=4, r_cut=10 — ok" in text
     assert "### l_max=4, r_cut=9 — failed" in text
     assert "Note: reference DFT incomplete" in text
+
+
+# ---------------------------------------------------------------------------
+#  spec.py — the typed, validated view of a run
+# ---------------------------------------------------------------------------
+def test_spec_rejects_an_unreachable_nzeta_scheme():
+    """The check that used to cost a full reference DFT before failing."""
+    config = dict(_COMPLETE_SIAB)
+    # r_cut=9, ecutjy=100, reduced gives 27 radial functions for l=0
+    config["orbitals"] = [{"nzeta": [28, 2, 2, 1, 0], "geoms": [0]}]
+    with pytest.raises(ValueError, match="not reachable"):
+        validate_siab_config(config)
+
+    config["orbitals"] = [{"nzeta": [27, 2, 2, 1, 0], "geoms": [0]}]
+    assert validate_siab_config(config) is not None      # fits, only warnings
+
+
+def test_spec_rejects_nzeta_beyond_lmaxmax():
+    config = dict(_COMPLETE_SIAB)
+    # trailing zeros do not raise the requested l_max: [3,2,2,1,0,0] is still 3
+    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0, 0], "geoms": [0]}]
+    validate_siab_config(config)
+    # a non-zero term at l=5 does (geoms[0].lmaxmax is 4)
+    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0, 1], "geoms": [0]}]
+    with pytest.raises(ValueError, match="lmaxmax"):
+        validate_siab_config(config)
+
+
+def test_spec_rejects_a_geometry_index_that_does_not_exist():
+    config = dict(_COMPLETE_SIAB)
+    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0], "geoms": [3]}]
+    with pytest.raises(ValueError, match="geoms\\[3\\]"):
+        validate_siab_config(config)
+
+
+def test_spec_rejects_unknown_orbital_keys():
+    """Unknown keys would be ignored by SIAB; saying so beats dropping them."""
+    config = dict(_COMPLETE_SIAB)
+    config["orbitals"] = [{"nzeta": [3, 2, 2, 1, 0], "geoms": [0],
+                           "llocmin": 4}]                 # typo
+    with pytest.raises(ValueError, match="llocmin"):
+        validate_siab_config(config)
+
+
+def test_spec_accepts_every_shipped_preset():
+    """Guard against the validator rejecting configurations SIAB accepts."""
+    from aiida_orbgen.utils.yamlio import read_yaml
+    from aiida_orbgen.utils.config import PARAMETERS_DIR
+
+    seen = 0
+    for table in sorted((PARAMETERS_DIR / "orbgen").glob("*.yml")):
+        for name, preset in (read_yaml(table) or {}).items():
+            validate_siab_config(preset, source=f"{table.name}#{name}")
+            seen += 1
+    assert seen >= 3
+
+
+def test_spec_reports_achievable_nzeta_and_grid():
+    spec = OrbgenSpec.model_validate(_COMPLETE_SIAB)
+    assert spec.lmaxmax == 4
+    assert spec.grid_points() == [(3, 9.0), (3, 10.0)]
+    # r_cut=9, ecutjy=100, reduced
+    assert spec.achievable_nzeta[0] == 27
+    assert spec.to_siab_config()["bessel_nao_rcut"] == [9.0, 10.0]
+
+
+def test_abacus_spec_warns_when_lcao_outputs_are_switched_off():
+    base = {"basis": ["pw", "lcao_nsw"], "tolerance_meV": 4.2}
+    assert AbacusSpec(**base).warnings() == []
+
+    spec = AbacusSpec(**base, parameters_input={"out_wfc_lcao": 0})
+    warnings = spec.warnings()
+    assert len(warnings) == 1 and "out_wfc_lcao" in warnings[0]
+
+    # a pure-PW run does not need them
+    assert AbacusSpec(basis=["pw"], parameters_input={"out_wfc_lcao": 0}).warnings() == []

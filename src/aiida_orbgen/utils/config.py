@@ -130,54 +130,30 @@ SIAB_ONLY_INPUT_KEYS = ("ecutjy", "vloc_aux", "primitive_type", "nzeta")
 def validate_siab_config(config: dict, *, source: str = "orbgen preset") -> list[str]:
     """Check an orbgen preset *before* it reaches a daemon.
 
-    Missing keys the pipeline reads are fatal — they used to surface only as
-    ``run_siab_pipeline`` Excepted (exit 403) in the daemon; keys that only the
-    final-orbital step needs are returned as warnings.
+    Fatal problems raise ``ValueError``; everything else comes back as warnings.
+    The checks themselves live in :mod:`aiida_orbgen.spec` (pydantic), which is
+    also what the WorkChain boundary uses, so a preset cannot pass here and fail
+    there.  Two classes of mistake are caught that used to reach SIAB:
+
+    * keys SIAB reads only from an orbital's ``model_kwargs`` (``vloc_aux``,
+      ``lloc_min``) written at the top level — silently dropped, so a requested g
+      channel came out empty;
+    * an ``nzeta`` scheme the primitive basis cannot provide, which SIAB only
+      notices after the reference DFT has been paid for.
     """
-    missing = [key for key in SIAB_REQUIRED_KEYS if config.get(key) is None]
-    if missing:
+    from aiida_orbgen.spec import OrbgenSpec
+
+    flat = OrbgenSpec.flat_vloc_aux(config)
+    if flat:
         raise ValueError(
-            f"{source}: missing required SIAB key(s) {missing}. "
-            f"The pipeline needs {list(SIAB_REQUIRED_KEYS)} — see "
-            f"parameters/orbgen/orbgen.yml for a complete example."
+            f"{source}: {flat[0]}, where SIAB ignores them — nest them under "
+            f"'model_kwargs' (model_kwargs: {{lloc_min: 4, vloc_aux: /abs/path.UPF}})."
         )
 
-    rcut = config["bessel_nao_rcut"]
-    if not isinstance(rcut, (list, tuple)) or not rcut:
-        raise ValueError(
-            f"{source}: 'bessel_nao_rcut' must be a non-empty list "
-            f"(e.g. [9, 10]), got {rcut!r}"
-        )
-
-    geoms = config["geoms"]
-    if not isinstance(geoms, (list, tuple)) or not geoms:
-        raise ValueError(f"{source}: 'geoms' must be a non-empty list")
-    for index, geom in enumerate(geoms):
-        if not isinstance(geom, dict):
-            raise ValueError(f"{source}: geoms[{index}] must be a mapping")
-        absent = [key for key in SIAB_REQUIRED_GEOM_KEYS if key not in geom]
-        if absent:
-            raise ValueError(
-                f"{source}: geoms[{index}] is missing {absent}; "
-                f"required: {list(SIAB_REQUIRED_GEOM_KEYS)}"
-            )
-
-    if not config["orbitals"]:
-        raise ValueError(f"{source}: 'orbitals' must be a non-empty list")
-
-    # SIAB reads vloc_aux / lloc_min only from ``model_kwargs``
-    # (``orbital_model_required_keys['atomic']``); written flat they are
-    # silently ignored, which quietly changes the fitted orbital.
-    for index, orbital in enumerate(config["orbitals"]):
-        if not isinstance(orbital, dict):
-            raise ValueError(f"{source}: orbitals[{index}] must be a mapping")
-        flat = [key for key in ("vloc_aux", "lloc_min") if key in orbital]
-        if flat:
-            raise ValueError(
-                f"{source}: orbitals[{index}] sets {flat} at the top level, "
-                f"where SIAB ignores them — nest them under 'model_kwargs' "
-                f"(model_kwargs: {{lloc_min: 4, vloc_aux: /abs/path.UPF}})."
-            )
+    try:
+        spec = OrbgenSpec.model_validate(config)
+    except Exception as exc:                     # pydantic ValidationError
+        raise ValueError(f"{source}: {exc}") from exc
 
     warnings = [
         f"{source}: '{key}' is not set — needed by the final CSW-NAO orbital "
@@ -185,11 +161,7 @@ def validate_siab_config(config: dict, *, source: str = "orbgen preset") -> list
         for key in SIAB_RECOMMENDED_KEYS
         if not config.get(key)
     ]
-    if not config.get("pseudo_dir"):
-        warnings.append(
-            f"{source}: 'pseudo_dir' is not set and input.json['static'] has "
-            f"no 'pseudo_path'"
-        )
+    warnings.extend(f"{source}: {warning}" for warning in spec.warnings())
     return warnings
 
 
@@ -382,37 +354,25 @@ def canonical_orbgen_config(
 def validate_abacus_input(config: dict, *, source: str = "abacus preset") -> list[str]:
     """Check the ABACUS-side ``parameters.input`` of a preset.
 
-    Catches the two ways a preset can poison the INPUT that reaches ABACUS:
-
-    * SIAB-only keys (``ecutjy`` …) — fatal: ABACUS refuses the whole INPUT
-      ("THE PARAMETER NAME 'ecutjy' IS NOT USED! ... Bad parameter") and every
-      child calculation is Excepted;
-    * AiiDA-managed keys (``pseudo_dir`` / ``basis_type`` / ``bessel_nao_rcut`` …)
-      — warned about, because the workchain drops them, so setting them here
-      has no effect (and hides where the real value comes from).
+    Fatal: SIAB-only keys (``ecutjy`` …) — ABACUS refuses the whole INPUT
+    ("THE PARAMETER NAME 'ecutjy' IS NOT USED! ... Bad parameter") and every
+    child calculation is Excepted.  Warnings: AiiDA-managed keys (the workchain
+    drops them, so setting them has no effect) and LCAO output switches that the
+    spillage step needs being switched *off*.
     """
-    from aiida_orbgen.static.defaults import AIIDA_MANAGED_KEYS
+    from aiida_orbgen.spec import AbacusSpec
 
-    overrides = (
-        config.get("abacus", {}).get("parameters", {}).get("input", {}) or {}
+    spec = AbacusSpec(
+        basis=list(config.get("basis") or DEFAULT_BASIS),
+        tolerance_meV=float(config.get("tolerance_meV", DEFAULT_TOLERANCE_MEV)),
+        parameters_input=(
+            config.get("abacus", {}).get("parameters", {}).get("input", {}) or {}
+        ),
     )
-    fatal = sorted(set(overrides) & set(SIAB_ONLY_INPUT_KEYS))
-    if fatal:
-        raise ValueError(
-            f"{source}: parameters.input contains SIAB-only key(s) {fatal} — "
-            f"ABACUS rejects unknown parameters and aborts the whole INPUT. "
-            f"Put them in the orbgen preset instead (e.g. `ecutjy` belongs "
-            f"next to `bessel_nao_rcut`)."
-        )
-
-    managed = sorted(set(overrides) & set(AIIDA_MANAGED_KEYS))
-    if managed:
-        return [
-            f"{source}: parameters.input sets AiiDA-managed key(s) {managed}; "
-            f"the workchain drops them (pseudo_family / basis handling decides "
-            f"their values)"
-        ]
-    return []
+    errors = spec.errors()
+    if errors:
+        raise ValueError(f"{source}: {errors[0]}")
+    return [f"{source}: {warning}" for warning in spec.warnings()]
 
 
 def candidates_from_orbgen(orbgen_cfg: dict, limits: dict | None = None) -> list[tuple[int, float]]:
