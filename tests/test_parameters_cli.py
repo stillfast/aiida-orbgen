@@ -1205,6 +1205,33 @@ def test_spec_accepts_every_shipped_preset():
     assert seen >= 3
 
 
+def test_presets_shared_by_name_agree():
+    """A preset name must mean the same thing in every shipped file.
+
+    ``test`` exists both in ``orbgen.yml`` (the file the flat spelling
+    ``{"orbgen": "test"}`` reads) and in ``test.yml`` (``{"orbgen": {"test": "test"}}``).
+    The two differed only in ``ecutjy`` (100 vs 150), i.e. the same preset name named
+    two different orbitals, and only the 150 Ry one could reuse the reference DFT tree
+    in ``project/u_14ve``. They agree now; this keeps a one-sided edit from
+    re-opening the trap.
+    """
+    from aiida_orbgen.utils.config import PARAMETERS_DIR
+    from aiida_orbgen.utils.yamlio import read_yaml
+
+    seen: dict[str, tuple[str, dict]] = {}
+    for table in sorted((PARAMETERS_DIR / "orbgen").glob("*.yml")):
+        for name, preset in (read_yaml(table) or {}).items():
+            if name in seen:
+                other_table, other_preset = seen[name]
+                assert preset == other_preset, (
+                    f"preset {name!r} differs between {other_table} and {table.name}: "
+                    f"{ {k: (other_preset.get(k), preset.get(k)) for k in set(other_preset) | set(preset) if other_preset.get(k) != preset.get(k)} }"
+                )
+            else:
+                seen[name] = (table.name, preset)
+    assert len(seen) >= 2                      # u_14ve + test (in two files)
+
+
 def test_spec_reports_achievable_nzeta_and_grid():
     spec = OrbgenSpec.model_validate(_COMPLETE_SIAB)
     assert spec.lmaxmax == 4

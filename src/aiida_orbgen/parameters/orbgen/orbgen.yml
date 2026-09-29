@@ -37,9 +37,15 @@ u_14ve:
   # 2026-09-20 → monomer never finished). Forcing the CPU keeps local DFT
   # reproducible; the cluster build is CPU-only anyway.
   device: "cpu"
+  # ecutjy names the primitive orbital (`..._<ecutjy>Ry_<nzeta>.orb`) and decides
+  # whether SIAB can reuse a reference DFT tree: 150 Ry matches
+  # parameters/orbgen/test.yml, the `project/u_14ve/run_lmax4_rcut10` tree and the
+  # orbitals in `project/u_14ve/report.md`. With 100 Ry the same (l_max, r_cut)
+  # names a different orbital (`_100Ry_`) and SIAB recomputes the reference dimer
+  # instead of reusing it.
   fit_basis: "jy"
   ecutwfc: 150
-  ecutjy: 100
+  ecutjy: 150
   bessel_nao_rcut: [9, 10]
   primitive_type: "reduced"
 
@@ -103,7 +109,7 @@ test:
   device: "cpu"
   fit_basis: "jy"
   ecutwfc: 150
-  ecutjy: 100
+  ecutjy: 150
   bessel_nao_rcut: [9, 10]
   primitive_type: "reduced"
 
