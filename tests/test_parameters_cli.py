@@ -654,7 +654,7 @@ def test_resolve_dft_root_searches_one_level_down(tmp_path):
     assert "run_lmax4_rcut9" in origin9 and "run_lmax4_rcut10" in origin10
 
 
-def test_primitive_export_falls_back_to_the_reference_tree(tmp_path):
+def test_primitive_export_falls_back_to_the_reference_tree(tmp_path, monkeypatch):
     """The recorded `orb_path` points at the submitting machine's scratch dir.
 
     `/tmp/test_orbgen_output/...` is usually gone by the time a report runs, so
@@ -678,6 +678,16 @@ def test_primitive_export_falls_back_to_the_reference_tree(tmp_path):
         },
     )
     summary = SimpleNamespace(grid=[point])
+
+    # This test is about the *filesystem* fallback, not about the database one: the
+    # family lookup is switched off so the result cannot depend on which
+    # AtomicOrbitalData nodes happen to be in the profile being used (it does —
+    # `siab-u-nr-pbe-z14-nsw-10au-150Ry-g` exists for real, and then the "nothing to
+    # fall back to" half of this test would find it).
+    from aiida_orbgen.utils.report import orbitals as report_orbitals
+
+    monkeypatch.setattr(report_orbitals, "_atomic_orbital_data_nodes",
+                        lambda *args, **kwargs: [])
 
     # without a search root there is nothing to fall back to ...
     files, warnings = export_primitive_orbitals(summary, tmp_path / "out")

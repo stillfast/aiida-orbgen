@@ -36,27 +36,37 @@ def _resolve_pertmags(
     proto: str,
     override: Optional[List[float]],
     bond_length: Optional[float],
+    geom: Optional[dict] = None,
 ) -> List[float]:
     """
     Decide the list of bond lengths to expand over.  Priority:
 
     1. ``override``: an explicitly passed list
     2. ``bond_length``: a single value -> wrapped into a one-element list
-    3. ``geoms[0].pertmags``: a list is used as is; the strings
-       ``"auto"``/``"scan"`` call SIAB
-    4. ``geoms[0].pertmags``: a single number -> wrapped into a one-element list
+    3. *geom*'s ``pertmags`` (default: ``geoms[0]``): a list is used as is; the
+       strings ``"auto"``/``"scan"`` call SIAB
+    4. *geom*'s ``pertmags``: a single number -> wrapped into a one-element list
     5. fallback: call SIAB's ``_build_pert(pertmags='auto')`` for the default
        bond lengths
 
+    A monomer has no bond length at all: SIAB's ``dft_folder`` ignores the
+    perturbation for one atom, so a single job is generated (the perturbation is
+    only there to satisfy the folder-name helper).
+
     No "automatic" path hard-codes numbers in the interface layer.
     """
+    if geom is not None and geom.get("proto") == "monomer":
+        return [0.0]
+
     if override is not None:
         return [float(p) for p in override]
     if bond_length is not None:
         return [float(bond_length)]
 
     geoms = json_config.get("geoms", [])
-    pertmags_raw = geoms[0].get("pertmags") if geoms else None
+    if geom is None:
+        geom = geoms[0] if geoms else {}
+    pertmags_raw = geom.get("pertmags")
 
     if isinstance(pertmags_raw, str):
         # "auto" / "scan" → handed over to SIAB entirely
@@ -184,39 +194,70 @@ def generate_all(
     else:
         rcut_for_folder = rcut_raw_first
 
-    pertmags_list = _resolve_pertmags(json_config, proto, pertmags, bond_length)
+    # 3. Generate INPUT/STRU for every reference geometry.
+    #
+    #    Every ``geoms`` entry is expanded, not just ``geoms[0]``: SIAB's spillage
+    #    step needs the *monomer* reference (`SIAB/driver/main.py` sets
+    #    ``model_kwargs['jobdir'] = dft_folder(elem, 'monomer', 0, rcut=...)`` for its
+    #    ``atomic`` initial guess), and a job folder is the only way that data ever
+    #    reaches the workflow.  With a dimer-only list SIAB dies at the very end with
+    #    ``FileNotFoundError: 'U-monomer-9au/OUT.ABACUS/INPUT'`` — after every child
+    #    has been paid for (2026-09-30).
+    geom_entries = json_config.get("geoms") or [{}]
+    dft_results: List[Dict[str, Any]] = []
+    seen_folders: set[str] = set()
+    pertmags_first: List[float] = []
 
-    # 3. Generate INPUT/STRU for each bond length
-    dft_results = []
-    for pert in pertmags_list:
-        folder = dft_folder_name(elem, proto, pert, rcut=rcut_for_folder)
-        dft_root = os.path.join(output_root, folder)
-        os.makedirs(dft_root, exist_ok=True)
+    for index, geom in enumerate(geom_entries):
+        geom = geom or {}
+        geom_proto = proto if (index == 0 and proto) else geom.get("proto") or proto or "dimer"
+        geom_perts = _resolve_pertmags(
+            json_config,
+            geom_proto,
+            pertmags if index == 0 else None,
+            bond_length if index == 0 else None,
+            geom=geom,
+        )
+        if index == 0:
+            pertmags_first = geom_perts
 
-        input_path = generate_incar(
-            json_config,
-            output_path=os.path.join(dft_root, "INPUT"),
-        )
-        stru_path = generate_stru(
-            json_config,
-            output_path=os.path.join(dft_root, "STRU"),
-            proto=proto,
-            bond_length=pert,
-            nspin=nspin,
-            lattice_constant=lattice_constant,
-            orb_filename=orb_filename,
-        )
-        dft_results.append({
-            "folder": folder,
-            "pert": pert,
-            "input": os.path.abspath(input_path),
-            "stru": os.path.abspath(stru_path),
-        })
+        for pert in geom_perts:
+            folder = dft_folder_name(elem, geom_proto, pert, rcut=rcut_for_folder)
+            if folder in seen_folders:
+                # e.g. the same geometry listed twice, or a monomer whose folder
+                # name ignores the perturbation
+                continue
+            seen_folders.add(folder)
+            dft_root = os.path.join(output_root, folder)
+            os.makedirs(dft_root, exist_ok=True)
+
+            input_path = generate_incar(
+                json_config,
+                output_path=os.path.join(dft_root, "INPUT"),
+            )
+            stru_path = generate_stru(
+                json_config,
+                output_path=os.path.join(dft_root, "STRU"),
+                proto=geom_proto,
+                bond_length=pert,
+                nspin=geom.get("nspin", nspin),
+                lattice_constant=geom.get("celldm", lattice_constant),
+                orb_filename=orb_filename,
+            )
+            dft_results.append({
+                "folder": folder,
+                "pert": pert,
+                "proto": geom_proto,
+                "input": os.path.abspath(input_path),
+                "stru": os.path.abspath(stru_path),
+            })
 
     return {
         "nsw": os.path.abspath(nsw_path),
         "nsw_filename": orb_filename,
-        "pertmags": pertmags_list,
+        # the perturbations of the first geometry: what the dimers were expanded
+        # over, and what the report shows
+        "pertmags": pertmags_first,
         "dft": dft_results,
     }
 
