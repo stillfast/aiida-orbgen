@@ -1254,6 +1254,73 @@ def test_abacus_spec_warns_when_lcao_outputs_are_switched_off():
 
 
 # ---------------------------------------------------------------------------
+#  the report reads the family the children actually used
+# ---------------------------------------------------------------------------
+class _FakeOutput:
+    def __init__(self, value=None, d=None):
+        self.value = value
+        self._d = d
+
+    def get_dict(self):
+        if self._d is None:
+            raise TypeError("not a Dict output")
+        return dict(self._d)
+
+
+class _FakeCalcNode:
+    """Just enough of an ``OrbgenCalcWorkChain`` node for ``_collect_grid_point``."""
+
+    def __init__(self, outputs, pk=1, exit_status=0, extras=None):
+        self.outputs = outputs
+        self.pk = pk
+        self.exit_status = exit_status
+        self.is_finished_ok = True
+        self.process_state = None
+        self.process_label = "OrbgenCalcWorkChain"
+        self.called = []
+        self.base = type("B", (), {"extras": type("E", (), {"all": extras or {}})()})()
+
+    @property
+    def inputs(self):
+        raise AttributeError("this fake has no inputs")
+
+
+def _node_with_family(label_in_info, family_output=None):
+    outputs = {
+        "siab_info": _FakeOutput(d={
+            "family_label": label_in_info, "lmax": 4, "rcut": 10.0,
+        }),
+        "energies": _FakeOutput(d={"delta_E_max_per_atom_meV": 109.95}),
+    }
+    if family_output is not None:
+        outputs["pseudo_family"] = _FakeOutput(value=family_output)
+    return _FakeCalcNode(outputs)
+
+
+def test_report_prefers_the_family_the_children_used():
+    """siab_info carries the name SIAB implies; the output carries the real one."""
+    from aiida_orbgen.utils.report.orbgen import _collect_grid_point
+
+    implied = "siab-u-nr-pbe-z14-nsw-10au-150Ry-g"
+    effective = implied + "-e6fb7f"
+    point = _collect_grid_point(_node_with_family(implied, effective))
+
+    assert point.siab_info["family_label"] == effective
+    # other siab_info keys survive the override
+    assert point.siab_info["lmax"] == 4
+    assert point.l_max == 4 and point.r_cut == 10.0
+
+
+def test_report_keeps_siab_info_when_there_is_no_family_output():
+    """Nodes from before the output existed must read exactly as they did."""
+    from aiida_orbgen.utils.report.orbgen import _collect_grid_point
+
+    implied = "siab-u-nr-pbe-z14-nsw-10au-150Ry-g"
+    point = _collect_grid_point(_node_with_family(implied))
+    assert point.siab_info["family_label"] == implied
+
+
+# ---------------------------------------------------------------------------
 #  aiida-orbgen select — recording the chosen grid point
 # ---------------------------------------------------------------------------
 def _summary_with_points():

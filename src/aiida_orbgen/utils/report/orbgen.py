@@ -135,6 +135,14 @@ def _get_dict(node, name: str) -> dict:
         return {}
 
 
+def _get_str(node, name: str) -> str | None:
+    """An optional ``Str`` output (missing on nodes from before it existed)."""
+    try:
+        return str(node.outputs[name].value)
+    except (AttributeError, KeyError):
+        return None
+
+
 def _calc_node_label(node) -> str:
     return getattr(node, "process_label", "") or type(node).__name__
 
@@ -159,6 +167,13 @@ def _collect_grid_point(calc_node) -> GridPoint:
 
     energies = _get_dict(calc_node, "energies")
     siab_info = _get_dict(calc_node, "siab_info")
+    # ``family_label`` in siab_info is the label SIAB's file names imply; the
+    # ``pseudo_family`` output is the one the children were actually given, which
+    # differs when that name was already taken by another pseudopotential
+    # (calculations/pseudo_family.label_for_pair).  Reports prefer the real one.
+    effective_label = _get_str(calc_node, "pseudo_family")
+    if effective_label:
+        siab_info = {**siab_info, "family_label": effective_label}
     if l_max is None:
         l_max = siab_info.get("lmax")
     if r_cut is None:

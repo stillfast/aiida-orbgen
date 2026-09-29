@@ -376,6 +376,44 @@ def test_run_siab_pipeline_keeps_the_config_next_to_the_run():
     assert "siab_config.json" in source
 
 
+def test_the_workchain_hands_the_children_the_family_it_registered():
+    """Registering a family and using another label is how "wrong pseudo" happens.
+
+    ``ensure_pseudo_family`` returns the label to use, which is *not* always the one
+    it was handed: when the derived name already belongs to a family built from
+    other files, it registers a content-suffixed label (see
+    ``calculations/pseudo_family.label_for_pair``).  The step has to keep that
+    answer, and ``submit_children`` has to take the label from one place.
+    """
+    tree = ast.parse(BATCH.read_text(encoding="utf-8"))
+    calc_wc = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "OrbgenCalcWorkChain"
+    )
+    methods = {
+        node.name: node for node in calc_wc.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    stored = [
+        node for node in ast.walk(methods["ensure_pseudo_family"])
+        if isinstance(node, ast.Attribute) and node.attr == "pseudo_family_label"
+        and isinstance(node.ctx, ast.Store)
+    ]
+    assert stored, "ensure_pseudo_family must keep the label it got back"
+
+    assigned = [
+        node for node in ast.walk(methods["submit_children"])
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "family_label"
+                for target in node.targets)
+    ]
+    assert len(assigned) == 1, "family_label must be decided in exactly one place"
+    value = assigned[0].value
+    assert isinstance(value, ast.Call) and getattr(value.func, "attr", "") == \
+        "_effective_family_label", ast.dump(value)
+
+
 def test_siab_facing_code_lives_in_one_module():
     """The WorkChain module must only orchestrate.
 

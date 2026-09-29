@@ -213,6 +213,11 @@ class OrbgenCalcWorkChain(WorkChain):
         spec.output("primitive_orbital", valid_type=SinglefileData, required=False,
                     help="The primitive NSW .orb this grid point used, archived in "
                          "provenance (the paths in siab_info point at scratch space).")
+        spec.output("pseudo_family", valid_type=Str, required=False,
+                    help="Pseudo family the children were given. Differs from "
+                         "siab_info.family_label when that name already belonged to a "
+                         "family built from another pseudopotential, in which case a "
+                         "content-suffixed label is registered instead.")
         spec.output("results", valid_type=Dict, required=False,
                     help="Per-task PK + status.")
         spec.output("energies", valid_type=Dict, required=False,
@@ -360,18 +365,47 @@ class OrbgenCalcWorkChain(WorkChain):
             and not self.inputs.build_family.value
         ):
             return
-        family_label = self.ctx.siab_info["family_label"]
+        base_label = self._base_family_label()
         upf_path = self.ctx.siab_info["upf_path"]
         orb_path = self.ctx.siab_info["orb_path"]
-        self.report(f"Step 1.5: ensure_pseudo_family('{family_label}') ...")
+        self.report(f"Step 1.5: ensure_pseudo_family('{base_label}') ...")
         try:
-            ensure_pseudo_family(
-                upf_path, orb_path, family_label,
+            # The label that comes back is the one the children must use: when the
+            # derived name already belongs to a family built from *other* files,
+            # ensure_pseudo_family registers a content-suffixed one instead of
+            # silently reusing the old pseudopotential (see
+            # calculations/pseudo_family.label_for_pair).
+            label = ensure_pseudo_family(
+                upf_path, orb_path, base_label,
                 build_if_missing=True,
                 description="Built by OrbgenCalcWorkChain",
             )
+            self.ctx.pseudo_family_label = label
+            if label != base_label:
+                self.report(
+                    f"  ⚠ family label '{base_label}' was taken by another "
+                    f"pseudopotential -> using '{label}'"
+                )
         except Exception as exc:
             self.report(f"WARNING: ensure_pseudo_family failed: {exc}")
+
+    def _base_family_label(self) -> str:
+        """The family label *before* the content check.
+
+        An explicit ``family_label`` input wins — it used to be ignored when the
+        family was registered (only the children honoured it), so a run could build
+        one label and hand the children another.
+        """
+        if "family_label" in self.inputs:
+            return str(self.inputs.family_label.value)
+        return str(self.ctx.siab_info["family_label"])
+
+    def _effective_family_label(self) -> str:
+        """The label the children must reference (built family first)."""
+        return str(
+            getattr(self.ctx, "pseudo_family_label", None)
+            or self._base_family_label()
+        )
 
     # ------------------------------------------------------------------
     # Step 2: submit children (basis x dft_entry)
@@ -424,11 +458,7 @@ class OrbgenCalcWorkChain(WorkChain):
             if "code_label" in self.inputs
             else abacus_config.get("code", DEFAULT_CODE_LABEL)
         )
-        family_label = (
-            self.inputs.get("family_label").value
-            if "family_label" in self.inputs
-            else self.ctx.siab_info["family_label"]
-        )
+        family_label = self._effective_family_label()
         input_overrides = abacus_config.get("parameters", {})
 
         self.ctx.children_info = []
@@ -583,6 +613,10 @@ class OrbgenCalcWorkChain(WorkChain):
             results_list=results,
         )
         self.out("results", results_node)
+        # Record the family the children actually used, so a later report does not
+        # have to re-derive it (and cannot pick the other pseudopotential's family).
+        if getattr(self.ctx, "pseudo_family_label", None):
+            self.out("pseudo_family", Str(self.ctx.pseudo_family_label))
         self.report(
             f"OrbgenCalcWorkChain Finished: {n_ok} OK, {n_failed} failed"
         )

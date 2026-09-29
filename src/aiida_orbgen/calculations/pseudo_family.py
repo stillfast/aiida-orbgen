@@ -19,6 +19,7 @@ Dependencies
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -39,6 +40,9 @@ __all__ = [
     "resolve_paths_from_json",
     "resolve_family_label",
     "family_exists",
+    "family_content_pairs",
+    "file_md5",
+    "label_for_pair",
     "build_orb_family",
     "ensure_pseudo_family",
 ]
@@ -212,6 +216,85 @@ def family_exists(family_label: str) -> Optional[int]:
     return row[0].pk
 
 
+def file_md5(path: "os.PathLike | str") -> str:
+    """md5 of a file's bytes — the digest ``UpfData``/``AtomicOrbitalData`` store.
+
+    Computed here from the files on disk (never by opening a stored node), so the
+    content check below costs nothing and works on a read-only object store.
+    """
+    digest = hashlib.md5()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def family_content_pairs(family_label: str) -> set[tuple[str, str]]:
+    """``(upf md5, orbital md5)`` pairs held by the family with this label.
+
+    Attributes only, so no repository access is needed.  An empty set means either
+    "no such family" or "family without members"; the callers only care that the
+    requested pair is not in it.
+    """
+    from aiida_abacus.data.orbital import AtomicOrbitalData
+
+    qb = orm.QueryBuilder()
+    qb.append(AtomicOrbitalFamily, filters={"label": family_label}, tag="family")
+    qb.append(
+        AtomicOrbitalData,
+        with_group="family",
+        project=["attributes.md5", "attributes.md5_orbital"],
+    )
+    return {(upf_md5, orb_md5) for upf_md5, orb_md5 in qb.all()}
+
+
+def label_for_pair(
+    base_label: str,
+    upf_path: "os.PathLike | str",
+    orb_path: "os.PathLike | str",
+    *,
+    existing=family_content_pairs,
+) -> tuple[str, str]:
+    """The family label to register under, plus a note when the name was taken.
+
+    A pseudo family is a *name* for one ``(UPF, ORB)`` pair, but
+    :func:`ensure_pseudo_family` used to skip creation whenever the name already
+    existed — so a freshly generated pseudopotential whose file name follows the
+    same convention silently inherited the family built from the *previous* one.
+    Measured on the live profile (2026-09-29): ``project/u_14ve/U.pbe-n-nc.UPF``
+    and ``project/pseudo/U.pbe-n-nc.14ve.UPF`` are different files (md5
+    ``024f9a43…`` vs ``166049de…``) that both derive
+    ``siab-u-nr-pbe-z14-nsw-10au-150Ry-g`` — the label of the family holding the
+    old UPF.  The children would have run with the old pseudopotential while
+    SIAB's reference DFT used the new one, and nothing would have said so.
+
+    Returns
+    -------
+    (label, note)
+        ``label`` is ``base_label`` when it is free or already holds exactly these
+        files, otherwise ``base_label`` plus a short digest of the pair.  ``note``
+        is a human-readable explanation, empty when there is nothing to explain.
+    """
+    upf_md5 = file_md5(upf_path)
+    orb_md5 = file_md5(orb_path)
+    pairs = existing(base_label)
+    if not pairs or (upf_md5, orb_md5) in pairs:
+        return base_label, ""
+
+    digest = hashlib.md5(f"{upf_md5}:{orb_md5}".encode()).hexdigest()[:6]
+    label = f"{base_label}-{digest}"
+    other = sorted({pair[0][:8] for pair in pairs})
+    note = (
+        f"family '{base_label}' already exists but holds different file(s) "
+        f"(stored upf md5 {other}, requested {upf_md5[:8]} = "
+        f"{Path(upf_path).name}); registering '{label}' instead. A pseudo family is "
+        f"a name for one (UPF, ORB) pair, and reusing the old label would run the "
+        f"children with the previous pseudopotential while SIAB's reference DFT "
+        f"used {Path(upf_path).name}."
+    )
+    return label, note
+
+
 def build_orb_family(
     upf_path: str,
     orb_path: str,
@@ -278,16 +361,20 @@ def ensure_pseudo_family(
     Returns
     -------
     str
-        family_label (whether newly created or reused)
+        the label the caller must use.  This is ``family_label`` unless that name
+        already belongs to a family built from *other* files, in which case a
+        content-suffixed label is registered instead (see :func:`label_for_pair`) —
+        the caller has to use the return value, not its argument.
     """
-    existing_pk = family_exists(family_label)
+    label, note = label_for_pair(family_label, upf_path, orb_path)
+    if note:
+        print(f"WARNING: {note}")
+    existing_pk = family_exists(label)
     if existing_pk is not None:
-        print(f"family '{family_label}' already exists (pk={existing_pk}), skipping creation")
-        return family_label
+        print(f"family '{label}' already exists (pk={existing_pk}), skipping creation")
+        return label
     if not build_if_missing:
         raise RuntimeError(
-            f"family '{family_label}' does not exist and build_if_missing=False"
+            f"family '{label}' does not exist and build_if_missing=False"
         )
-    return build_orb_family(
-        upf_path, orb_path, family_label, description=description
-    )
+    return build_orb_family(upf_path, orb_path, label, description=description)
