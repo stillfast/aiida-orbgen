@@ -952,7 +952,11 @@ def test_plan_runs_calc_uses_the_grid_point_directory(tmp_path):
 
     plan = plans[0]
     assert plan.candidates == [(4, 9.0)]  # --only 0 → first candidate
-    assert plan.output_dir.name == "lmax4_rcut9p0"
+    # the same spelling the workflow and the report use (point_dir_name), not the
+    # pre-2026-09-29 ``lmax4_rcut9p0`` the plan builder used to write
+    from aiida_orbgen.interfaces.nsw import point_dir_name
+
+    assert plan.output_dir.name == point_dir_name(4, 9.0) == "lmax4_rcut9"
 
 
 def test_cli_check_and_dry_run_write_no_output_json(tmp_path, capsys):

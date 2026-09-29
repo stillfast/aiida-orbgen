@@ -201,7 +201,14 @@ def plan_runs(
                 plan_dir = output_root / orbgen.name
             else:
                 l_max, r_cut = candidates[0]
-                plan_dir = output_root / orbgen.name / f"lmax{l_max}_rcut{str(r_cut).replace('.', 'p')}"
+                # The point directory name has one implementation
+                # (interfaces.nsw.point_dir_name -> ``lmax4_rcut10``); this used to
+                # spell it ``lmax4_rcut10p0`` here while the workflow and the report
+                # used the current spelling, so the announced run root and the tree
+                # the run produced did not match.
+                from aiida_orbgen.interfaces.nsw import point_dir_name
+
+                plan_dir = output_root / orbgen.name / point_dir_name(l_max, r_cut)
             plan_dir.mkdir(parents=True, exist_ok=True)
 
             plans.append(RunPlan(
