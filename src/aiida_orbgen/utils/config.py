@@ -51,10 +51,13 @@ Layout of ``input.json``
     ``siab_config`` (an inline SIAB config, see below).
 
     ``siab_config`` replaces the ``parameters.orbgen`` slot with the config
-    itself.  ``aiida-orbgen select`` writes it so that "run the point the grid
-    search chose" needs no preset edit; it is canonicalised and validated exactly
-    like a YAML preset, and because it carries that point's ``bessel_nao_rcut`` /
-    ``lmaxmax`` it resolves to a single candidate (→ ``orbgen.calc``).
+    itself, and ``siab_config_name`` (default ``"inline"``) is the preset name it
+    is known by — that name becomes the run directory
+    (``<output_dir>/<name>/lmax4_rcut10``).  ``aiida-orbgen select`` writes both so
+    that "run the point the grid search chose" needs no preset edit.  The config is
+    canonicalised and validated exactly like a YAML preset, and because it carries
+    that point's ``bessel_nao_rcut`` / ``lmaxmax`` it resolves to a single
+    candidate (→ ``orbgen.calc``).
 
 The ``parameters/`` tree is **user input**: the plugin only ever *reads* it.
 Nothing here (or anywhere else in the package) rewrites a preset — values such
@@ -565,11 +568,20 @@ class ConfigLoader:
                 f"input.json['static']['siab_config'] must be the SIAB config "
                 f"itself (a non-empty object), got {type(raw).__name__}"
             )
+        # The preset name is not cosmetic: it names the run directory
+        # (``<output_dir>/<name>/lmax4_rcut10``) and appears in the provenance, so
+        # ``static.siab_config_name`` lets a project call it something meaningful
+        # instead of the key it happened to be written under.
+        name = static.get("siab_config_name") or "inline"
+        if not isinstance(name, str) or not name.strip():
+            raise TypeError(
+                "input.json['static']['siab_config_name'] must be a non-empty string"
+            )
         source = f"{self.input_json_path}#static.siab_config"
         config = canonical_orbgen_config(raw, **canonical_kwargs)
         self._warnings.extend(validate_siab_config(config, source=source))
         return [PresetEntry(
-            slot="orbgen", name="static.siab_config", config=config, source=source
+            slot="orbgen", name=str(name).strip(), config=config, source=source
         )]
 
     def _load_slot(self, slot: str, **canonical_kwargs) -> list[PresetEntry]:

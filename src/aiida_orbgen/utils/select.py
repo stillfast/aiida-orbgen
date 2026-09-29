@@ -182,6 +182,8 @@ def _single_candidate_input(base_input: dict, selection: Selection,
     static = out.setdefault("static", {})
     if siab_config is not None:
         static["siab_config"] = json.loads(json.dumps(siab_config))
+        # names the run directory (``run/selected/lmax4_rcut10``)
+        static["siab_config_name"] = "selected"
     static["selected_point"] = {
         "l_max": selection.l_max,
         "r_cut": selection.r_cut,

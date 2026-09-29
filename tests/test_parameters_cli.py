@@ -117,7 +117,7 @@ def test_inline_siab_config_replaces_the_orbgen_preset(tmp_path):
 
     bundle = ConfigLoader(path).load_all()
 
-    assert [preset.name for preset in bundle.orbgen_presets] == ["static.siab_config"]
+    assert [preset.name for preset in bundle.orbgen_presets] == ["inline"]
     assert bundle.orbgen_presets[0].config["ecutjy"] == 150
     # static.pseudo_path is still injected into the inline config
     assert bundle.orbgen_presets[0].config["pseudo_dir"] == bundle.pseudo_path
@@ -142,7 +142,7 @@ def test_inline_siab_config_without_the_orbgen_slot(tmp_path):
     path.write_text(json.dumps(payload))
 
     bundle = ConfigLoader(path).load_all()
-    assert [preset.name for preset in bundle.orbgen_presets] == ["static.siab_config"]
+    assert [preset.name for preset in bundle.orbgen_presets] == ["inline"]
     assert not any("is ignored" in warning for warning in bundle.warnings)
 
 
@@ -153,6 +153,36 @@ def test_inline_siab_config_is_validated_like_a_preset(tmp_path):
     payload["static"]["siab_config"] = {"element": "U"}     # no ecutjy / geoms
     path.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="ecutjy"):
+        ConfigLoader(path).load_all()
+
+
+def test_inline_siab_config_name_names_the_run_directory(tmp_path):
+    """The name is used for `run/<name>/lmax4_rcut10`, so it must be editable."""
+    path = _write_input(tmp_path, {"abacus": {"test": "test"}})
+    payload = json.loads(path.read_text())
+    payload["static"]["siab_config"] = {
+        "element": "U", "ecutjy": 150, "bessel_nao_rcut": [10.0],
+        "geoms": [{"proto": "dimer", "pertkind": "stretch", "pertmags": [2.2],
+                   "lmaxmax": 4}],
+        "orbitals": [{"nzeta": [3, 2, 2, 1], "geoms": [0]}],
+    }
+    path.write_text(json.dumps(payload))
+
+    # default name
+    assert [p.name for p in ConfigLoader(path).load_all().orbgen_presets] == ["inline"]
+
+    payload["static"]["siab_config_name"] = "pbe_nc_150Ry"
+    path.write_text(json.dumps(payload))
+    bundle = ConfigLoader(path).load_all()
+    assert [p.name for p in bundle.orbgen_presets] == ["pbe_nc_150Ry"]
+    from aiida_orbgen.cli._common import plan_runs
+
+    plans = plan_runs(bundle, output_root=tmp_path / "run")
+    assert plans[0].output_dir.parent.name == "pbe_nc_150Ry"
+
+    payload["static"]["siab_config_name"] = "   "
+    path.write_text(json.dumps(payload))
+    with pytest.raises(TypeError, match="siab_config_name"):
         ConfigLoader(path).load_all()
 
 
@@ -1408,6 +1438,7 @@ def test_select_writes_a_reusable_bundle(tmp_path):
     # has to be edited.  `workflow` is left for the loader to decide (one candidate
     # -> orbgen.calc), which is what makes this file reusable as-is.
     assert reuse["static"]["siab_config"]["ecutjy"] == 150
+    assert reuse["static"]["siab_config_name"] == "selected"
     assert "workflow" not in reuse
     assert reuse["static"]["selected_point"]["from_node"] == 410517
     assert reuse["parameters"] == {"orbgen": {"u_14ve": "u_14ve"}}   # untouched
