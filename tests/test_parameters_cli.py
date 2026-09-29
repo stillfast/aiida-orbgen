@@ -979,6 +979,37 @@ def test_render_report_contains_matrices_and_best():
     assert "_(no orbital file could be exported — see the log for details)_" in text
 
 
+def test_render_report_shows_spillage_and_orbital_validation():
+    """Quality numbers must reach the report, not just the result dict."""
+    from aiida_orbgen.utils.report.orbgen import render_report
+    from aiida_orbgen.utils.report.orbgen import OrbgenRunSummary
+
+    summary = OrbgenRunSummary(
+        node_pk=1, node_uuid="u", label="OrbgenGridSearchWorkChain",
+        kind="gridsearch", status="Finished [304]", exit_status=304,
+        process_state="finished", tolerance_meV=4.2,
+        search_strategy="exhaustive", grid=[],
+    )
+    text = render_report(
+        summary,
+        final_orbitals=[{
+            "l_max": 4, "r_cut": 10.0,
+            "status": "ok",
+            "spillage": [1.20492740e-03, 1.74717634e-03],
+            "normalise": {"ok": True, "message": "SIAB would recompute nothing"},
+            "validated": [{
+                "file": "/tmp/U_gga_10au_150Ry_4s3p2d2f1g.orb", "ok": True,
+                "per_l": [4, 3, 2, 2, 1], "expected": [4, 3, 2, 2, 1],
+            }],
+            "files": ["/tmp/U_gga_10au_150Ry_4s3p2d2f1g.orb"],
+        }],
+    )
+    assert "Spillage (converged)" in text
+    assert "1.204927e-03" in text and "1.747176e-03" in text
+    assert "SIAB consistency: SIAB would recompute nothing" in text
+    assert "4 3 2 2 1" in text and "✅" in text
+
+
 def test_render_report_single_point_and_final_orbital():
     summary = _summary()
     summary.kind = "calc"

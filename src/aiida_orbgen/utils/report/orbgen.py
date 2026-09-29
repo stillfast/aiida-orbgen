@@ -623,17 +623,40 @@ def _render_tail(
             lines.append(f"- Stale reference data moved aside: {moved}")
         if entry.get("config_notice"):
             lines.append(f"- ⚠ {entry['config_notice']}")
+        normalised = entry.get("normalise") or {}
+        if normalised:
+            lines.append("- SIAB consistency: " + str(
+                normalised.get("message") or "not checked"
+            ))
+        if entry.get("spillage") is not None:
+            values = entry["spillage"]
+            shown = ", ".join(f"{value:.6e}" for value in values)
+            lines.append(f"- Spillage (converged): {shown}")
         if entry.get("message"):
             lines.append(f"- Note: {entry['message']}")
+
+        checked = {Path(item["file"]).name: item
+                   for item in (entry.get("validated") or [])}
         produced = entry.get("files") or []
         if produced:
             lines.append("")
-            lines.append("| Orbital file | Bytes |")
-            lines.append("| --- | ---: |")
+            if checked:
+                lines.append("| Orbital file | Bytes | l channels (per l) | Scheme ok |")
+                lines.append("| --- | ---: | --- | :---: |")
+            else:
+                lines.append("| Orbital file | Bytes |")
+                lines.append("| --- | ---: |")
             for path in produced:
                 path = Path(path)
                 size = path.stat().st_size if path.exists() else 0
-                lines.append(f"| `{path.name}` | {size} |")
+                item = checked.get(path.name)
+                if item is None:
+                    lines.append(f"| `{path.name}` | {size} |")
+                    continue
+                per_l = item.get("per_l")
+                cells = " ".join(str(n) for n in per_l) if per_l else "?"
+                mark = "✅" if item.get("ok") else "❌ " + str(item.get("reason", ""))
+                lines.append(f"| `{path.name}` | {size} | {cells} | {mark} |")
         lines.append("")
 
     # An index of everything the report directory holds, so a report generated
