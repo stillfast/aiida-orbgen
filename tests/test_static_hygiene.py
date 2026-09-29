@@ -7,6 +7,8 @@ until the exact line runs:
   rarely-taken branch raises ``NameError``.  Two real examples were found this way:
   ``self.ctx.grid[idx + 1]`` in the iterative grid strategy (``idx`` never existed)
   and a missing ``import json`` in ``cli/run.py``'s ``select`` path.
+* **unused imports** — the same refactors leave imports pointing at code that moved
+  away; a growing pile of them hides the one import that is actually missing.
 * **Chinese text in code** — the project is English-only, and a stray comment is
   invisible until someone greps for it.
 
@@ -53,8 +55,8 @@ def _iter_sources(*subdirs: str, suffixes: tuple[str, ...] = (".py",)) -> list[P
     return sorted(found)
 
 
-def _pyflakes_undefined_names(paths: list[Path]) -> list[str]:
-    """Pyflakes messages that mention an undefined name, as ``file:line: msg``."""
+def _pyflakes_messages(paths: list[Path]) -> list[str]:
+    """Every pyflakes message for *paths*, as ``file:line:col: message``."""
     pyflakes_api = pytest.importorskip(
         "pyflakes.api", reason="pyflakes is not installed"
     )
@@ -64,8 +66,14 @@ def _pyflakes_undefined_names(paths: list[Path]) -> list[str]:
     reporter = Reporter(out, err)
     for path in paths:
         pyflakes_api.checkPath(str(path), reporter)
-    messages = (out.getvalue() + err.getvalue()).splitlines()
-    return [line for line in messages if "undefined name" in line]
+    return (out.getvalue() + err.getvalue()).splitlines()
+
+
+def _show(problems: list[str]) -> str:
+    """Readable report: paths relative to the repository root."""
+    return "\n".join(
+        problem.replace(str(REPO_ROOT) + "/", "") for problem in problems
+    )
 
 
 def test_no_undefined_names_in_the_package():
@@ -73,12 +81,26 @@ def test_no_undefined_names_in_the_package():
     paths += [path for path in EXTRA_ROOTS if path.is_file()]
     assert paths, "no sources found — the sweep is looking in the wrong place"
 
-    problems = _pyflakes_undefined_names(paths)
-    # Make paths readable: /abs/path.py:12:5: undefined name 'x'
-    shown = "\n".join(
-        problem.replace(str(REPO_ROOT) + "/", "") for problem in problems
-    )
-    assert not problems, f"undefined names found:\n{shown}"
+    problems = [
+        message for message in _pyflakes_messages(paths)
+        if "undefined name" in message
+    ]
+    assert not problems, f"undefined names found:\n{_show(problems)}"
+
+
+def test_package_has_no_unused_imports():
+    """An import nobody uses is either a leftover or a bug (a name never read).
+
+    The package is clean as of this commit; keeping it that way is what makes the
+    pyflakes "undefined name" check above continue to mean something.  ``siab_api.py``
+    at the repository root is exempt: it is a wide API surface for manual use.
+    """
+    paths = _iter_sources("src/aiida_orbgen")
+    problems = [
+        message for message in _pyflakes_messages(paths)
+        if "imported but unused" in message
+    ]
+    assert not problems, f"unused imports found:\n{_show(problems)}"
 
 
 def test_sources_contain_no_chinese():

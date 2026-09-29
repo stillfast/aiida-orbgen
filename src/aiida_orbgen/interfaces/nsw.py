@@ -75,7 +75,7 @@ def apply_grid_point(config: dict, l_max: int, r_cut: float) -> dict:
 
     This is the **only** implementation of that override.  It used to exist
     twice -- ``workflows/batch.run_siab_pipeline`` wrote ``[float(r_cut)]``
-    while ``utils/report/orbitals._apply_grid_point`` wrote the integer
+    while the report layer wrote the integer
     spelling -- so the same grid point produced differently named primitive and
     final orbitals depending on which layer had derived the config.
 

@@ -47,7 +47,14 @@ Layout of ``input.json``
     ``pseudo_path`` (absolute path of the UPF; injected as the SIAB
     ``pseudo_dir``), ``metadata`` (a scheduler-options preset name inside
     ``parameters/metadata.yml``), ``output_dir`` (SIAB run root, optional),
-    ``dft_root`` / ``dft_roots`` (reference DFT trees, used by ``report``).
+    ``dft_root`` / ``dft_roots`` (reference DFT trees, used by ``report``),
+    ``siab_config`` (an inline SIAB config, see below).
+
+    ``siab_config`` replaces the ``parameters.orbgen`` slot with the config
+    itself.  ``aiida-orbgen select`` writes it so that "run the point the grid
+    search chose" needs no preset edit; it is canonicalised and validated exactly
+    like a YAML preset, and because it carries that point's ``bessel_nao_rcut`` /
+    ``lmaxmax`` it resolves to a single candidate (→ ``orbgen.calc``).
 
 The ``parameters/`` tree is **user input**: the plugin only ever *reads* it.
 Nothing here (or anywhere else in the package) rewrites a preset — values such
@@ -436,7 +443,15 @@ class ConfigLoader:
             code=codes.get("abacus"),
             options=metadata.get("options", {}),
         )
-        orbgen_presets = self._load_slot("orbgen", pseudo_path=pseudo_path)
+        orbgen_presets = self._inline_orbgen_preset(pseudo_path=pseudo_path)
+        if orbgen_presets:
+            if "orbgen" in (self.input_params.get("parameters") or {}):
+                self._warnings.append(
+                    "static.siab_config is set, so parameters['orbgen'] is ignored "
+                    "(the inline config is the whole SIAB configuration)"
+                )
+        else:
+            orbgen_presets = self._load_slot("orbgen", pseudo_path=pseudo_path)
 
         if not abacus_presets:
             raise KeyError(
@@ -529,6 +544,34 @@ class ConfigLoader:
         return entry, str(name)
 
     # -- preset loading ----------------------------------------------------
+    def _inline_orbgen_preset(self, **canonical_kwargs) -> list[PresetEntry]:
+        """The ``static.siab_config`` override, as a one-entry preset list.
+
+        ``aiida-orbgen select`` writes it: a SIAB config that already ran (and was
+        validated) for one grid point, so re-running *that* point needs no preset
+        edit.  Because the config carries the point's own ``bessel_nao_rcut`` and
+        ``lmaxmax``, the candidate grid it yields has exactly one entry and the
+        loader picks ``orbgen.calc`` by itself.
+
+        The override goes through the same canonicalisation and validation as a
+        YAML preset — a hand-written one is not a way to skip the checks.
+        """
+        static = self.input_params.get("static") or {}
+        raw = static.get("siab_config")
+        if raw is None:
+            return []
+        if not isinstance(raw, dict) or not raw:
+            raise TypeError(
+                f"input.json['static']['siab_config'] must be the SIAB config "
+                f"itself (a non-empty object), got {type(raw).__name__}"
+            )
+        source = f"{self.input_json_path}#static.siab_config"
+        config = canonical_orbgen_config(raw, **canonical_kwargs)
+        self._warnings.extend(validate_siab_config(config, source=source))
+        return [PresetEntry(
+            slot="orbgen", name="static.siab_config", config=config, source=source
+        )]
+
     def _load_slot(self, slot: str, **canonical_kwargs) -> list[PresetEntry]:
         """Resolve one ``parameters[<slot>]`` entry into a list of presets."""
         parameters = self.input_params["parameters"]

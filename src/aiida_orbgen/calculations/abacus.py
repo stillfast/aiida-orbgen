@@ -374,7 +374,9 @@ def build_abacus_json_from_files(
 
     # 1) read the files back into AiiDA data nodes through data/
     incar = IncarData.from_file(input_file)
-    sd = StructureData.from_stru(structure_file)
+    # Parsed (not kept) so that an unreadable STRU fails here, with the file name,
+    # instead of inside the child calculation.
+    StructureData.from_stru(structure_file)
 
     # 2) extract the INPUT parameter dict (i.e. the parameters.input abacus.base needs)
     input_params = incar.get_dict()

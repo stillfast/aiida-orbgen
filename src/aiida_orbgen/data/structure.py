@@ -34,10 +34,10 @@ from typing import Optional, List, Dict, Tuple
 
 import numpy as np
 
-# Try to import ase
+# Try to import ase (only ``Atoms`` is used here; reading STRU files goes through
+# `parse_stru_to_ase`, and `ase.io` is only used by the tests)
 try:
     from ase import Atoms
-    from ase.io import read as ase_read
     ASE_AVAILABLE = True
 except ImportError:
     ASE_AVAILABLE = False
@@ -228,10 +228,9 @@ class StructureData:
         # Lattice vectors
         lattice_vectors = cell.array / avg_latconst  # normalised
 
-        # Positions
+        # Positions (Cartesian: get_scaled_positions() would need a cell, and the
+        # STRU is written as Cartesian_angstrom_center_xyz)
         positions = self.atoms.get_positions()  # Angstrom
-        # Convert to fractional (relative to the normalised cell)
-        fractional = self.atoms.get_scaled_positions()
 
         # Magnetization
         magmom = self.atoms.get_initial_magnetic_moments()
@@ -432,7 +431,8 @@ def _parse_atomic_positions(
         raise ValueError("ATOMIC_POSITIONS section too short")
 
     coord_type = lines[0].split()[0] if lines[0] else "Cartesian_angstrom"
-    elem_label = lines[1] if len(lines) > 1 else None
+    # lines[1] is the element label of the ATOMIC_POSITIONS block; the species are
+    # taken from ATOMIC_SPECIES, so it is not needed here (and units follow coord_type)
     magnetization = float(lines[2]) if len(lines) > 2 else 0.0
     natoms = int(lines[3]) if len(lines) > 3 else 0
 

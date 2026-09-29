@@ -182,12 +182,13 @@ def base_config() -> dict:
 
 def test_apply_grid_point_writes_the_integer_rcut_spelling():
     """Both layers must produce the same config -- that is the whole point."""
-    from aiida_orbgen.utils.report.orbitals import _apply_grid_point
-
     config = apply_grid_point(base_config(), 3, 9.0)
     assert config["bessel_nao_rcut"] == [9]           # 9.0 -> 9, not [9.0]
     assert config["geoms"][0]["lmaxmax"] == 3
-    assert _apply_grid_point(base_config(), 3, 9.0) == config
+    # the report layer reaches the same implementation (it used to wrap its own)
+    from aiida_orbgen.utils.report import orbitals as report_orbitals
+
+    assert report_orbitals.apply_grid_point is apply_grid_point
     # 9.4 is not integral: keep the fraction, SIAB names it `9.4au`
     assert apply_grid_point(base_config(), 4, 9.4)["bessel_nao_rcut"] == [9.4]
 

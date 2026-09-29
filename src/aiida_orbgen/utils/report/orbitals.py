@@ -472,11 +472,6 @@ def _build_siab_config(calc_node, l_max: int, r_cut: float,
     return apply_grid_point(config, l_max, r_cut)
 
 
-def _apply_grid_point(config: dict, l_max: int, r_cut: float) -> dict:
-    """Same override ``run_siab_pipeline`` applies for one grid point."""
-    return apply_grid_point(config, l_max, r_cut)
-
-
 def load_preset_config(
     input_json: str | Path | None,
     l_max: int,
@@ -504,7 +499,7 @@ def load_preset_config(
             f"input.json selects {len(bundle.orbgen_presets)} orbgen presets "
             f"— cannot tell which one this grid point used"
         )
-    config = _apply_grid_point(bundle.orbgen_presets[0].config, l_max, r_cut)
+    config = apply_grid_point(bundle.orbgen_presets[0].config, l_max, r_cut)
     return config, None
 
 
@@ -768,7 +763,9 @@ def generate_final_orbital(
     if siab_config is not None:
         try:
             with open(siab_config, "r", encoding="utf-8") as handle:
-                config = _apply_grid_point(json.load(handle), point.l_max, point.r_cut)
+                config = apply_grid_point(
+                    json.load(handle), point.l_max, point.r_cut
+                )
         except Exception as exc:  # noqa: BLE001
             result["message"] = f"cannot read --siab-json {siab_config}: {exc}"
             return result

@@ -183,7 +183,6 @@ def generate_all(
         rcut_for_folder: Any = int(rcut_raw_first)
     else:
         rcut_for_folder = rcut_raw_first
-    rcut = float(rcut_raw_first)
 
     pertmags_list = _resolve_pertmags(json_config, proto, pertmags, bond_length)
 

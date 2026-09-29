@@ -425,7 +425,6 @@ def parse_stru(filepath: str) -> Dict[str, Any]:
                     for tok in line.split():
                         try:
                             expected_coords = int(tok)
-                            natoms = expected_coords
                             # Infer proto from the atom count
                             proto_map = {1: "monomer", 2: "dimer", 3: "trimer", 4: None}
                             result["proto"] = proto_map.get(expected_coords)

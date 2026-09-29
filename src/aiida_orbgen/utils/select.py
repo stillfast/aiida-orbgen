@@ -18,8 +18,10 @@ point.  What was missing is the last mile: writing that decision down somewhere 
 
    ``<dir>/selected.json``          the decision (point, ΔE, tolerance, node, config)
    ``<dir>/orbgen_<point>.json``    the SIAB config, ready for ``report --siab-json``
-   ``<dir>/input.selected.json``    an ``input.json`` with *only* that candidate,
-                                    so ``run`` submits a single ``orbgen.calc``
+   ``<dir>/input.selected.json``    an ``input.json`` pinned to that candidate:
+                                    the point's config goes inline as
+                                    ``static.siab_config``, so ``run`` submits a
+                                    single ``orbgen.calc`` with no preset edit
 
 Nothing in ``parameters/`` is rewritten: that tree is user input, and a preset
 carries more than the two numbers a grid search decides.
@@ -151,24 +153,35 @@ def selection_payload(
     if siab_config is not None:
         payload["siab_config"] = siab_config
     if base_input is not None:
-        payload["input_json"] = _single_candidate_input(base_input, selection)
+        payload["input_json"] = _single_candidate_input(
+            base_input, selection, siab_config
+        )
     return payload
 
 
-def _single_candidate_input(base_input: dict, selection: Selection) -> dict:
-    """An ``input.json`` whose orbgen preset is pinned to this one grid point.
+def _single_candidate_input(base_input: dict, selection: Selection,
+                            siab_config: dict | None = None) -> dict:
+    """An ``input.json`` pinned to this one grid point.
 
-    Derived from the ``input.json`` the run used (so codes, profile, scheduler
-    and paths stay identical) with two changes: the orbgen slot points at the
-    written config, and the candidate list collapses to a single point — which
-    is what makes ``run`` submit ``orbgen.calc`` instead of a grid search.
+    Derived from the ``input.json`` the run used (so codes, profile, scheduler and
+    paths stay identical) with two changes:
+
+    * ``static.siab_config`` gets this point's SIAB config — the same dict written
+      as ``orbgen_<point>.json``, already carrying the point's own
+      ``bessel_nao_rcut`` / ``lmaxmax``.  ``ConfigLoader`` reads that key *instead
+      of* ``parameters.orbgen``, so the loader resolves exactly one candidate and
+      picks ``orbgen.calc`` without any preset being edited (and validates the
+      inline config like a preset).  Leaving the preset name in place was wrong:
+      it made the bundle look runnable while pointing at a preset that does not
+      exist.
+    * ``static.selected_point`` records where the choice came from — informational
+      (``selected.json`` is the full record), kept because an ``input.json`` should
+      explain itself.
     """
     out = json.loads(json.dumps(base_input or {}))
-    parameters = out.setdefault("parameters", {})
-    parameters["orbgen"] = {"selected": "selected"}
-    out["workflow"] = "orbgen.calc"
     static = out.setdefault("static", {})
-    static.setdefault("selected_point", {})
+    if siab_config is not None:
+        static["siab_config"] = json.loads(json.dumps(siab_config))
     static["selected_point"] = {
         "l_max": selection.l_max,
         "r_cut": selection.r_cut,

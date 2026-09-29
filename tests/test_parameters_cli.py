@@ -96,6 +96,75 @@ def test_dict_form_selects_the_named_file_and_preset(tmp_path):
     assert bundle.orbgen_presets[0].config["pseudo_dir"] == bundle.pseudo_path
 
 
+def test_inline_siab_config_replaces_the_orbgen_preset(tmp_path):
+    """``static.siab_config`` is how `select` re-runs one chosen grid point."""
+    inline = {
+        "element": "U",
+        "ecutjy": 150,
+        "ecutwfc": 150,
+        "bessel_nao_rcut": [10.0],
+        "geoms": [{"proto": "dimer", "pertkind": "stretch", "pertmags": [2.2],
+                   "lmaxmax": 4}],
+        "orbitals": [{"nzeta": [3, 2, 2, 1], "geoms": [0]}],
+    }
+    path = _write_input(
+        tmp_path,
+        {"abacus": {"test": "test"}, "orbgen": {"test": "test"}},
+    )
+    payload = json.loads(path.read_text())
+    payload["static"]["siab_config"] = inline
+    path.write_text(json.dumps(payload))
+
+    bundle = ConfigLoader(path).load_all()
+
+    assert [preset.name for preset in bundle.orbgen_presets] == ["static.siab_config"]
+    assert bundle.orbgen_presets[0].config["ecutjy"] == 150
+    # static.pseudo_path is still injected into the inline config
+    assert bundle.orbgen_presets[0].config["pseudo_dir"] == bundle.pseudo_path
+    # one (l_max, r_cut) -> the loader picks orbgen.calc with no explicit workflow
+    assert bundle.workflow == WORKFLOW_CALC
+    assert bundle.workflow_explicit is False
+    assert bundle.candidates() == [(4, 10.0)]
+    # parameters['orbgen'] is still there, so the override has to say so
+    assert any("static.siab_config is set" in warning for warning in bundle.warnings)
+
+
+def test_inline_siab_config_without_the_orbgen_slot(tmp_path):
+    """An inline config makes ``parameters['orbgen']`` unnecessary."""
+    path = _write_input(tmp_path, {"abacus": {"test": "test"}})
+    payload = json.loads(path.read_text())
+    payload["static"]["siab_config"] = {
+        "element": "U", "ecutjy": 150, "bessel_nao_rcut": [10.0],
+        "geoms": [{"proto": "dimer", "pertkind": "stretch", "pertmags": [2.2],
+                   "lmaxmax": 4}],
+        "orbitals": [{"nzeta": [3, 2, 2, 1], "geoms": [0]}],
+    }
+    path.write_text(json.dumps(payload))
+
+    bundle = ConfigLoader(path).load_all()
+    assert [preset.name for preset in bundle.orbgen_presets] == ["static.siab_config"]
+    assert not any("is ignored" in warning for warning in bundle.warnings)
+
+
+def test_inline_siab_config_is_validated_like_a_preset(tmp_path):
+    """An inline config is not a way to skip the checks a preset gets."""
+    path = _write_input(tmp_path, {"abacus": {"test": "test"}})
+    payload = json.loads(path.read_text())
+    payload["static"]["siab_config"] = {"element": "U"}     # no ecutjy / geoms
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="ecutjy"):
+        ConfigLoader(path).load_all()
+
+
+def test_inline_siab_config_must_be_an_object(tmp_path):
+    path = _write_input(tmp_path, {"abacus": {"test": "test"}})
+    payload = json.loads(path.read_text())
+    payload["static"]["siab_config"] = "parameters/orbgen/test.yml"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(TypeError, match="static.*siab_config"):
+        ConfigLoader(path).load_all()
+
+
 def test_flat_form_and_auto_workflow(tmp_path):
     """A single (l_max, r_cut) candidate needs no grid search."""
     path = _write_input(tmp_path, {"abacus": "test", "orbgen": "u_14ve"})
@@ -1236,6 +1305,11 @@ def test_select_writes_a_reusable_bundle(tmp_path):
     assert json.loads(Path(written["siab_config"]).read_text())["ecutjy"] == 150
 
     reuse = json.loads(Path(written["input_json"]).read_text())
-    assert reuse["workflow"] == "orbgen.calc"          # one candidate, not a grid
-    assert reuse["parameters"]["orbgen"] == {"selected": "selected"}
+    # The point's own config goes inline: ConfigLoader reads static.siab_config
+    # instead of parameters.orbgen, so exactly one candidate exists and no preset
+    # has to be edited.  `workflow` is left for the loader to decide (one candidate
+    # -> orbgen.calc), which is what makes this file reusable as-is.
+    assert reuse["static"]["siab_config"]["ecutjy"] == 150
+    assert "workflow" not in reuse
     assert reuse["static"]["selected_point"]["from_node"] == 410517
+    assert reuse["parameters"] == {"orbgen": {"u_14ve": "u_14ve"}}   # untouched

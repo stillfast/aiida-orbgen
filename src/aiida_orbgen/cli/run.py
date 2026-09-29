@@ -509,6 +509,12 @@ def cmd_select(args) -> int:
         print(f"  {label} [{summary.node_uuid[:8]}]: {payload['description']}")
         for kind, path in written.items():
             print(f"      {kind:11s}: {path}")
+        if "input_json" in written:
+            # input.selected.json carries the point's config inline
+            # (static.siab_config), so it submits exactly this point — no preset edit
+            print("      run        : aiida-orbgen check -i "
+                  f"{written['input_json']}  &&  aiida-orbgen run -i "
+                  f"{written['input_json']}")
         if siab_config is not None:
             print("      next       : aiida-orbgen report -i output.json "
                   f"--siab-json {written['siab_config']} --calc-pk {point.pk}")
@@ -712,9 +718,10 @@ def build_parser() -> argparse.ArgumentParser:
             "acceptable one by default, or an explicit --l-max/--r-cut / "
             "--calc-pk — and write a small bundle: selected.json (the decision), "
             "orbgen_<point>.json (its validated SIAB config, usable with "
-            "`report --siab-json`) and input.selected.json (an input.json whose "
-            "orbgen slot is pinned to that single candidate, so `run` submits "
-            "one orbgen.calc). Parameters/ presets are never rewritten."
+            "`report --siab-json`) and input.selected.json (an input.json that "
+            "carries the point's config inline as static.siab_config, so `run` "
+            "submits exactly this one orbgen.calc). Parameters/ presets are never "
+            "rewritten."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -732,7 +739,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_select.add_argument("--siab-json", dest="siab_json", default=None, type=Path,
                           help="SIAB config to record instead of the one stored on the node.")
     p_select.add_argument("--input-config", dest="input_config", default=None, type=Path,
-                          help="input.json to derive input.selected.json from.")
+                          help="input.json of the finished run; its copy "
+                               "(input.selected.json) re-runs the chosen point as-is.")
     p_select.set_defaults(func=cmd_select)
 
     # The legacy ``submit-siab`` sub-command (``cli/submit_siab.py``) was
