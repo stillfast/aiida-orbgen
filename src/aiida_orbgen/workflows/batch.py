@@ -212,6 +212,9 @@ class OrbgenCalcWorkChain(WorkChain):
         # ---- outputs ----
         spec.output("siab_info", valid_type=Dict, required=False,
                     help="SIAB pipeline result (nsw, family_label, dft, ...).")
+        spec.output("primitive_orbital", valid_type=SinglefileData, required=False,
+                    help="The primitive NSW .orb this grid point used, archived in "
+                         "provenance (the paths in siab_info point at scratch space).")
         spec.output("results", valid_type=Dict, required=False,
                     help="Per-task PK + status.")
         spec.output("energies", valid_type=Dict, required=False,
@@ -322,7 +325,9 @@ class OrbgenCalcWorkChain(WorkChain):
             self.report(f"ERROR: SIAB pipeline failed: {exc}")
             return self.exit_codes.ERROR_SIAB_FAILED
 
-        info = siab_result.get_dict()
+        if "primitive_orbital" in siab_result:
+            self.out("primitive_orbital", siab_result["primitive_orbital"])
+        info = siab_result["info"].get_dict()
         n_dft = len(info.get("dft", []))
         if n_dft == 0:
             return self.exit_codes.ERROR_NO_DFT_JOBS
@@ -336,7 +341,7 @@ class OrbgenCalcWorkChain(WorkChain):
             f"  -> {n_dft} DFT job(s) generated"
         )
         self.ctx.siab_info = info
-        self.out("siab_info", siab_result)
+        self.out("siab_info", siab_result["info"])
 
     # ------------------------------------------------------------------
     # Step 1.5: pseudo_family

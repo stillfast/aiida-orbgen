@@ -174,8 +174,37 @@ def export_primitive_orbitals(
         )
         written = False
 
+        # 0) the primitive this exact run archived (single source of truth; the
+        #    other sources are reconstructions of the same file)
+        pk = getattr(point, "primitive_orbital_pk", None)
+        if pk is not None and orb_name:
+            try:
+                from aiida.orm import load_node
+
+                node = load_node(pk)
+                target = _claim_path(out_dir, orb_name, point, claimed)
+                content = node.base.repository.get_object_content(orb_name, mode="rb")
+                target.write_bytes(
+                    content if isinstance(content, bytes) else content.encode()
+                )
+                files.append(OrbitalFile(
+                    path=target,
+                    source=f"aiida:primitive_orbital<{pk}>",
+                    family_label=family_label,
+                    l_max=point.l_max,
+                    r_cut=point.r_cut,
+                    kind="primitive",
+                    pk=pk,
+                ))
+                written = True
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(
+                    f"grid point <{point.pk}>: cannot read the archived primitive "
+                    f"orbital <{pk}>: {exc}"
+                )
+
         # 1) AiiDA repository of the AtomicOrbitalData (UPF + ORB pair)
-        if family_label or orb_name:
+        if not written and (family_label or orb_name):
             try:
                 nodes = _atomic_orbital_data_nodes(family_label, orb_name)
             except Exception as exc:  # noqa: BLE001

@@ -63,7 +63,7 @@ def run_siab_pipeline(
     output_dir: Str,
     lmax: Int,
     rcut: Float,
-) -> Dict:
+) -> dict:
     """在 worker 节点跑 ``generate_all_from_json``, 返回任务列表。
 
     Parameters
@@ -79,9 +79,11 @@ def run_siab_pipeline(
 
     Returns
     -------
-    Dict
-        ``{"nsw", "nsw_filename", "pertmags", "dft", "upf_path", "orb_path",
-           "family_label", "lmax", "rcut", "config_path"}``
+    dict[str, Any]
+        ``{"info": Dict, "primitive_orbital": SinglefileData | missing}`` —
+        ``info`` holds the paths and the job list, ``primitive_orbital`` the
+        primitive NSW ``.orb`` itself, so it is archived instead of only
+        referenced.
 
     Notes
     -----
@@ -118,7 +120,7 @@ def run_siab_pipeline(
 
     paths = resolve_paths_from_json(local_json, result)
 
-    return Dict(dict={
+    info = Dict(dict={
         "nsw": result["nsw"],
         "nsw_filename": result["nsw_filename"],
         "pertmags": result["pertmags"],
@@ -130,6 +132,19 @@ def run_siab_pipeline(
         "lmax": int(lmax.value),
         "rcut": float(rcut.value),
     })
+
+    # The primitive orbital itself goes into the provenance.  The paths in
+    # ``info`` point into the run directory, which is scratch space (``/tmp`` in
+    # the default setup) and may be gone by the time a report runs -- that is
+    # exactly what happened on 2026-09-19, when the primitive could only be
+    # recovered from the pseudo family.  A ``SinglefileData`` survives.
+    primitive = result["nsw"]
+    outputs: dict[str, Any] = {"info": info}
+    try:
+        outputs["primitive_orbital"] = SinglefileData(file=primitive)
+    except Exception:  # noqa: BLE001 — never fail the pipeline over this
+        pass
+    return outputs
 
 
 # ===========================================================================

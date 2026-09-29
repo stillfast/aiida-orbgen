@@ -59,6 +59,11 @@ class GridPoint:
     siab_info: dict = field(default_factory=dict)
     output_dir: str | None = None
     error: str | None = None
+    #: ``SinglefileData`` output of the CalcWorkChain holding the primitive
+    #: ``.orb`` (present for runs submitted after 2026-09-29).  The file is in
+    #: the AiiDA repository, so it outlives the scratch directory that
+    #: ``siab_info['orb_path']`` points at.
+    primitive_orbital_pk: int | None = None
 
     @property
     def n_data(self) -> int:
@@ -212,7 +217,17 @@ def _collect_grid_point(calc_node) -> GridPoint:
         children=children,
         siab_info=siab_info,
         output_dir=output_dir,
+        primitive_orbital_pk=_primitive_orbital_pk(calc_node),
     )
+
+
+def _primitive_orbital_pk(calc_node) -> int | None:
+    """PK of the archived primitive ``.orb`` of one CalcWorkChain, if any."""
+    try:
+        node = calc_node.outputs.get("primitive_orbital")
+    except Exception:  # noqa: BLE001 — older runs simply do not have it
+        return None
+    return getattr(node, "pk", None)
 
 
 def _as_float(value: Any) -> float | None:

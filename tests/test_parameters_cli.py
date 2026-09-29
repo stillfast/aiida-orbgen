@@ -590,6 +590,45 @@ def test_primitive_export_falls_back_to_the_reference_tree(tmp_path):
     assert (tmp_path / "out2" / name).read_text().startswith("primitive orbital")
 
 
+def test_primitive_export_prefers_the_archived_orbital(tmp_path, monkeypatch):
+    """Runs submitted after 2026-09-29 archive the primitive in provenance.
+
+    That copy survives the scratch directory (`siab_info['orb_path']` points at
+    `/tmp/...`), so it must be used before the family lookup or the filesystem
+    fallbacks.
+    """
+    import aiida.orm
+    from aiida_orbgen.utils.report.orbitals import export_primitive_orbitals
+
+    name = "U_gga_10au_100Ry_30s30p29d29f28g.orb"
+
+    class _Repo:
+        def get_object_content(self, name, mode="rb"):
+            return b"archived primitive\n"
+
+    class _Node:
+        pk = 4242
+        base = SimpleNamespace(repository=_Repo())
+
+    monkeypatch.setattr(aiida.orm, "load_node", lambda pk: _Node())
+
+    point = GridPoint(
+        l_max=4, r_cut=10.0, pk=410517, exit_status=304, finished_ok=False,
+        process_state="finished",
+        siab_info={"nsw_filename": name,
+                   "orb_path": "/tmp/test_orbgen_output/primitive_jy/" + name,
+                   "family_label": "siab-u-nr-pbe-z14-nsw-10au-100Ry-g"},
+        primitive_orbital_pk=_Node.pk,
+    )
+    files, warnings = export_primitive_orbitals(
+        SimpleNamespace(grid=[point]), tmp_path
+    )
+    assert warnings == []
+    assert [f.path.name for f in files] == [name]
+    assert files[0].source == f"aiida:primitive_orbital<{_Node.pk}>"
+    assert (tmp_path / name).read_text() == "archived primitive\n"
+
+
 def test_resolve_dft_root_prefers_the_per_point_mapping(tmp_path):
     from aiida_orbgen.utils.report.orbitals import resolve_dft_root
 
