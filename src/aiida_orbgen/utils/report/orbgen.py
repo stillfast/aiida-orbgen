@@ -236,6 +236,27 @@ def _collect_grid_point(calc_node) -> GridPoint:
     )
 
 
+def non_variational_pairs(point) -> list[dict]:
+    """Per-geometry entries where ``E_lcao < E_pw`` — impossible, hence a red flag.
+
+    The LCAO:nsw basis is a finite subset of the plane-wave space, so its total
+    energy must sit *above* the PW reference (``E_lcao >= E_pw``).  An entry below it
+    means the two calculations are not describing the same Hamiltonian, and the ΔE of
+    that point is meaningless — no amount of ``r_cut``/``l_max`` will fix it.  Seen on
+    2026-09-30: a freshly generated pseudopotential whose projector set made ABACUS's
+    LCAO path disagree with its PW path by ~69 eV, which the report would otherwise
+    have presented as "the basis is not converged".
+    """
+    offenders = []
+    for entry in point.per_struct or []:
+        e_pw, e_lcao = entry.get("E_pw"), entry.get("E_lcao_nsw")
+        if e_pw is None or e_lcao is None:
+            continue
+        if float(e_lcao) < float(e_pw):
+            offenders.append(entry)
+    return offenders
+
+
 def _primitive_orbital_pk(calc_node) -> int | None:
     """PK of the archived primitive ``.orb`` of one CalcWorkChain, if any."""
     try:
@@ -544,6 +565,19 @@ def render_report(
                     f"| {_fmt(None if d_per_atom is None else float(d_per_atom) * 1000.0, 3)} |"
                 )
             lines.append("")
+            offenders = non_variational_pairs(point)
+            if offenders:
+                worst = min(float(e["E_lcao_nsw"]) - float(e["E_pw"]) for e in offenders)
+                lines.append(
+                    f"> ⚠ **{len(offenders)} of {len(point.per_struct)} geometries have "
+                    f"`E_lcao_nsw < E_pw`** (worst: {worst:.3f} eV). A finite LCAO basis "
+                    f"cannot be below the plane-wave reference, so these ΔE values do "
+                    f"not measure basis quality: the two ABACUS runs disagree about the "
+                    f"Hamiltonian (pseudopotential/projector set, or different "
+                    f"pseudo/orbital files). Check the pseudo family and the "
+                    f"`number_of_proj` of the UPF before reading anything else here."
+                )
+                lines.append("")
         else:
             lines.append("_(no per-dimer energies in the `energies` output)_")
             if point.children and any(child["exit_status"] == 0 for child in point.children):

@@ -1337,6 +1337,60 @@ def _node_with_family(label_in_info, family_output=None):
     return _FakeCalcNode(outputs)
 
 
+def test_report_flags_a_non_variational_lcao_energy():
+    """E_lcao < E_pw cannot happen for a real basis — the report must say so.
+
+    2026-09-30: a regenerated UPF made ABACUS's LCAO path sit 69 eV below its PW
+    path, i.e. the ΔE tables were measuring a broken comparison rather than an
+    unconverged basis.
+    """
+    from aiida_orbgen.utils.report.orbgen import render_report
+
+    point = GridPoint(
+        l_max=4, r_cut=10.0, pk=461051, exit_status=304, finished_ok=False,
+        process_state="finished", tolerance_meV=4.2,
+        delta_max_per_atom_meV=34692.955,
+        per_struct=[
+            {"folder": "U-dimer-2.75-10au", "n_atoms": 2,
+             "E_pw": -4950.975407, "E_lcao_nsw": -5020.361317,
+             "dE": 69.385910, "dE_per_atom": 34.692955},
+        ],
+    )
+    summary = OrbgenRunSummary(
+        node_pk=461057, node_uuid="303b7b46-78ab-474d-818e-ccd95d44583d",
+        label="OrbgenGridSearchWorkChain", kind="gridsearch",
+        status="Finished [404]", exit_status=404, process_state="finished",
+        tolerance_meV=4.2, grid=[point],
+    )
+    text = render_report(summary, include_process_logs=False)
+    assert "E_lcao_nsw < E_pw" in text
+    assert "cannot be below the plane-wave reference" in text
+    assert "number_of_proj" in text
+
+
+def test_report_does_not_flag_a_normal_basis_error():
+    """The ordinary case — LCAO slightly above PW — must stay quiet."""
+    from aiida_orbgen.utils.report.orbgen import render_report
+
+    point = GridPoint(
+        l_max=4, r_cut=10.0, pk=410517, exit_status=304, finished_ok=True,
+        process_state="finished", tolerance_meV=4.2, delta_max_per_atom_meV=86.418,
+        per_struct=[
+            {"folder": "U-dimer-2.75-10au", "n_atoms": 2,
+             "E_pw": -3462.915097527, "E_lcao_nsw": -3462.742261675,
+             "dE": 0.172836, "dE_per_atom": 0.086418},
+        ],
+    )
+    summary = OrbgenRunSummary(
+        node_pk=410274, node_uuid="0798b3e9-668c-485e-9479-fb8fcbf42c35",
+        label="OrbgenGridSearchWorkChain", kind="gridsearch",
+        status="Finished [404]", exit_status=404, process_state="finished",
+        tolerance_meV=4.2, grid=[point],
+    )
+    text = render_report(summary, include_process_logs=False)
+    assert "E_lcao_nsw < E_pw" not in text
+
+
 def test_report_prefers_the_family_the_children_used():
     """siab_info carries the name SIAB implies; the output carries the real one."""
     from aiida_orbgen.utils.report.orbgen import _collect_grid_point
