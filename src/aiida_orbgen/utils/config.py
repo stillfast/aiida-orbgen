@@ -438,6 +438,14 @@ class ConfigLoader:
             raise FileNotFoundError(
                 f"static.pseudo_path does not exist: {pseudo_path}"
             )
+        if pseudo_path:
+            # Cheapest possible place to catch a broken pseudopotential: `check` and
+            # `run` both come through here, and the problems found this way (duplicate
+            # angular-momentum channels, mis-sized blocks) only show up as tens-of-eV
+            # nonsense — or an ABACUS assertion — after a full grid has been paid for.
+            from aiida_orbgen.utils.upf import upf_warnings
+
+            self._warnings.extend(upf_warnings(str(pseudo_path)))
 
         metadata, metadata_name = self._metadata()
 

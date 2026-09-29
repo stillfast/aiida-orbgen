@@ -96,6 +96,74 @@ def test_dict_form_selects_the_named_file_and_preset(tmp_path):
     assert bundle.orbgen_presets[0].config["pseudo_dir"] == bundle.pseudo_path
 
 
+def _fake_upf(path, *, projectors=((0, 984), (1, 984)), dij=None, declare=None, nwfc=None):
+    """A minimal UPF with the blocks the checks look at."""
+    blocks = "\n".join(
+        f'<PP_BETA.{index} angular_momentum="{l}" cutoff_radius_index="{ci}" '
+        f'label="X{index}">0.0 1.0 2.0</PP_BETA.{index}>'
+        for index, (l, ci) in enumerate(projectors, start=1)
+    )
+    count = len(projectors) if declare is None else declare
+    wavefunctions = len(projectors) if nwfc is None else nwfc
+    values = " ".join("0.0" for _ in range(len(projectors) ** 2)) if dij is None else dij
+    path.write_text(
+        f'<UPF version="2.0.1">\n<PP_HEADER number_of_proj="{count}" '
+        f'mesh_size="3" number_of_wfc="{wavefunctions}" z_valence="14"/>\n{blocks}\n'
+        f"<PP_DIJ>{values}</PP_DIJ>\n</UPF>\n"
+    )
+    return path
+
+
+def test_upf_warning_for_a_projector_without_a_reference_state(tmp_path):
+    """The file that broke ABACUS's LCAO path had 6 projectors but 5 wavefunctions.
+
+    The working `U.pbe-n-nc.14ve.UPF` has 5/5 and is fine even though two of its *s*
+    projectors share a cutoff radius, so the projector/wavefunction count is the signal
+    that separates them.
+    """
+    from aiida_orbgen.utils.upf import upf_warnings
+
+    # exactly the working file's shape: two s projectors, one per other l, 5 chi
+    good = _fake_upf(tmp_path / "good.UPF", projectors=((0, 984), (0, 984), (1, 985)),
+                     nwfc=3)
+    assert upf_warnings(good) == []
+
+    # the new file's shape: an extra l=1 at the same cutoff, 5 chi
+    bad = _fake_upf(tmp_path / "bad.UPF", projectors=((0, 990), (1, 990), (1, 990)),
+                    nwfc=2)
+    warnings = upf_warnings(bad)
+    assert len(warnings) == 1
+    assert "3 projectors but only 2 atomic wavefunctions" in warnings[0]
+    assert "l=1 twice at cutoff index 990" in warnings[0]
+    assert "distinct cutoff radius" in warnings[0]
+
+
+def test_upf_warning_for_blocks_that_disagree_with_the_header(tmp_path):
+    from aiida_orbgen.utils.upf import upf_warnings
+
+    text = _fake_upf(tmp_path / "mismatch.UPF", projectors=((0, 1), (1, 2)),
+                     declare=3).read_text()
+    assert any("number_of_proj=3" in w for w in upf_warnings(tmp_path / "mismatch.UPF"))
+
+    _fake_upf(tmp_path / "short_dij.UPF", projectors=((0, 1), (1, 2)), dij="0.0 0.0 0.0")
+    assert any("PP_DIJ holds 3 values" in w
+               for w in upf_warnings(tmp_path / "short_dij.UPF"))
+    assert text
+
+
+def test_the_loader_reports_upf_problems_on_check(tmp_path):
+    """`check` must say it before anything is submitted, not after the DFT."""
+    _fake_upf(tmp_path / "U.test.UPF", projectors=((0, 990), (1, 990), (1, 990)),
+              nwfc=2)
+    path = _write_input(
+        tmp_path, {"abacus": {"test": "test"}, "orbgen": {"test": "test"}},
+        extra={"static": {"pseudo_path": str(tmp_path / "U.test.UPF"),
+                          "metadata": "yeesuan"}},
+    )
+    bundle = ConfigLoader(path).load_all()
+    assert any("l=1 twice" in w for w in bundle.warnings)
+
+
 def test_inline_siab_config_replaces_the_orbgen_preset(tmp_path):
     """``static.siab_config`` is how `select` re-runs one chosen grid point."""
     inline = {
