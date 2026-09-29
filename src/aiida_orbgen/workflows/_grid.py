@@ -20,7 +20,9 @@ from typing import Any, Iterable, Sequence
 __all__ = [
     "GridEntry",
     "build_cartesian_grid",
+    "build_explicit_grid",
     "build_multi_json_grid",
+    "cap_grid",
     "has_pending_iterative",
     "work_dir_name",
 ]
@@ -51,12 +53,13 @@ class GridEntry:
 def work_dir_name(l_max: int, r_cut: float) -> str:
     """Per-grid-point sub-directory of ``OrbgenGridSearchWorkChain``.
 
-    ``10.0`` becomes ``10p0`` so the name stays a single path component.  Note
-    the report layer deliberately uses a different spelling (``lmax4_rcut10``,
-    see ``utils/report/orbitals.point_dir_name``); both are load-bearing for
-    existing output trees, so they are *not* unified here.
+    Delegates to :func:`aiida_orbgen.interfaces.nsw.point_dir_name` so the
+    workflow and the report layer agree on ``lmax4_rcut10``; they used to
+    disagree (``lmax4_rcut10p0`` vs ``lmax4_rcut10``) for the same point.
     """
-    return f"lmax{int(l_max)}_rcut{str(r_cut).replace('.', 'p')}"
+    from aiida_orbgen.interfaces.nsw import point_dir_name
+
+    return point_dir_name(l_max, r_cut)
 
 
 def build_cartesian_grid(
@@ -80,6 +83,26 @@ def build_cartesian_grid(
     return entries
 
 
+def build_explicit_grid(pairs: Sequence[Sequence[Any]], siab_json: Any) -> list[GridEntry]:
+    """Grid from an explicit ``[[l_max, r_cut], ...]`` list (not a product).
+
+    Needed to fill in a gap in a grid that was already scanned, e.g. only
+    ``[(4, 11.0), (4, 12.0)]`` after ``r_cut <= 10`` had been evaluated.
+    """
+    entries: list[GridEntry] = []
+    for pair in pairs:
+        values = list(pair)
+        if len(values) != 2:
+            raise ValueError(
+                f"candidates entries must be [l_max, r_cut] pairs, got {pair!r}"
+            )
+        entries.append(
+            GridEntry(l_max=int(values[0]), r_cut=float(values[1]),
+                      siab_json=siab_json, index=len(entries))
+        )
+    return entries
+
+
 def build_multi_json_grid(pairs: Sequence[tuple[int, float, Any]]) -> list[GridEntry]:
     """One entry per ``orbgen.json`` (multi-JSON mode), order preserved."""
     return [
@@ -94,15 +117,39 @@ def has_pending_iterative(
     n_done: int,
     best: Any = None,
     dry_run: bool = False,
+    stop_on_first_valid: bool = True,
 ) -> bool:
     """Whether the ``iterative`` loop should try another grid point.
 
-    Stops (a) in dry-run mode, (b) as soon as an acceptable point was found,
-    (c) once every candidate has been tried.  Extracted from the WorkChain so
-    the stopping rule is testable without a daemon.
+    Stops (a) in dry-run mode, (b) as soon as an acceptable point was found --
+    unless ``stop_on_first_valid`` is False, which is how "run the whole grid,
+    then choose" is expressed --, (c) once every candidate has been tried.
+    Extracted from the WorkChain so the stopping rule is testable without a
+    daemon.
     """
     if dry_run:
         return False
-    if best is not None:
+    if best is not None and stop_on_first_valid:
         return False
     return n_done < len(grid)
+
+
+def cap_grid(
+    grid: Sequence[GridEntry],
+    max_l_max: int | None = None,
+    max_r_cut: float | None = None,
+) -> list[GridEntry]:
+    """Apply the optional ``max_l_max`` / ``max_r_cut`` caps, keeping indices.
+
+    ``with_default_abacus`` has always forwarded these two keys, but only
+    ``advanced.py`` ever honoured them.
+    """
+    capped = [
+        entry for entry in grid
+        if (max_l_max is None or entry.l_max <= int(max_l_max))
+        and (max_r_cut is None or entry.r_cut <= float(max_r_cut))
+    ]
+    return [
+        GridEntry(l_max=e.l_max, r_cut=e.r_cut, siab_json=e.siab_json, index=i)
+        for i, e in enumerate(capped)
+    ]

@@ -24,6 +24,8 @@ __all__ = [
     "compute_nbes_per_l",
     "folder_rcut",
     "apply_grid_point",
+    "point_dir_name",
+    "LEGACY_POINT_DIR_SUFFIX",
 ]
 
 
@@ -44,6 +46,28 @@ def folder_rcut(r_cut: float):
     """
     value = float(r_cut)
     return int(value) if value.is_integer() else value
+
+
+#: The workflow used to spell the per-grid-point directory ``lmax4_rcut10p0``
+#: while the report layer used ``lmax4_rcut10`` for the same point.  The report
+#: spelling is the canonical one now (it is also what ``static.dft_roots`` keys
+#: use); the legacy spelling is still *read*, so existing run trees keep working.
+LEGACY_POINT_DIR_SUFFIX = "p"
+
+
+def point_dir_name(l_max: int, r_cut: float) -> str:
+    """Directory name of one grid point, e.g. ``lmax4_rcut10``.
+
+    ``r_cut`` is rendered the way SIAB names its folders (``10``, not ``10.0``),
+    so the directory of a grid point and the reference-geometry folders inside
+    it agree.
+    """
+    return f"lmax{int(l_max)}_rcut{folder_rcut(r_cut)}"
+
+
+def legacy_point_dir_name(l_max: int, r_cut: float) -> str:
+    """The pre-2026-09-29 spelling (``lmax4_rcut10p0``), for lookups only."""
+    return f"lmax{int(l_max)}_rcut{str(r_cut).replace('.', LEGACY_POINT_DIR_SUFFIX)}"
 
 
 def apply_grid_point(config: dict, l_max: int, r_cut: float) -> dict:

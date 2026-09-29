@@ -18,48 +18,55 @@ OrbgenCalcWorkChain — 单个 (l_max, r_cut) 组合下的批量 ABACUS 提交
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from aiida import orm
-from aiida.engine import WorkChain, ExitCode, calcfunction, append_, if_, while_
+from aiida.engine import WorkChain, ExitCode, append_, if_, while_
 from aiida.orm import (
     Bool,
     Dict,
     Float,
     Int,
-    KpointsData,
     List,
     SinglefileData,
     Str,
-    StructureData,
-    load_code,
 )
 
-from aiida_orbgen.interfaces import (
-    apply_grid_point,
-    generate_all_from_json,
-    params_stru_to_ase,
-    parse_incar,
-)
+from aiida_orbgen.interfaces import params_stru_to_ase
 from aiida_orbgen.static.defaults import (
     DEFAULT_CODE_LABEL,
     DEFAULT_MAX_MEMORY_KB,
     DEFAULT_NUM_MPI,
     DEFAULT_QUEUE_NAME,
     DEFAULT_WALLCLOCK_SECONDS,
-    apply_input_overrides,
 )
 from aiida_orbgen.static.json_inputs import with_default_abacus
 from aiida_orbgen.workflows._grid import (
     GridEntry,
     build_cartesian_grid,
+    build_explicit_grid,
     build_multi_json_grid,
+    cap_grid,
     has_pending_iterative,
     work_dir_name,
 )
 
+# SIAB-facing code and result assembly live in their own modules; they are
+# re-exported here because ``pyproject.toml`` points the entry points at this
+# module and existing imports (tests, report layer) use these names.
+from aiida_orbgen.workflows.results import (
+    create_energies_dict,
+    create_final_results,
+    create_grid_all_results,
+    create_grid_summary,
+)
+from aiida_orbgen.workflows.siab import (
+    build_abacus_child_inputs,
+    n_atoms_from_stru,
+    run_siab_pipeline,
+)
+
 # abacuslite 读 STRU → dict
-from abacuslite.io.generalio import read_stru
 
 __all__ = [
     "OrbgenCalcWorkChain",
@@ -67,370 +74,6 @@ __all__ = [
     "run_siab_pipeline",
     "build_abacus_child_inputs",
 ]
-
-
-# ===========================================================================
-#  CalcFunction: SIAB pipeline (AiiDA 自动缓存)
-# ===========================================================================
-
-
-@calcfunction
-def run_siab_pipeline(
-    siab_json: SinglefileData,
-    output_dir: Str,
-    lmax: Int,
-    rcut: Float,
-) -> Dict:
-    """在 worker 节点跑 ``generate_all_from_json``, 返回任务列表。
-
-    Parameters
-    ----------
-    siab_json : SinglefileData
-        pbe_orbgen.json 文件
-    output_dir : Str
-        SIAB 生成目录
-    lmax : Int
-        最高角动量 (强制覆盖到 orbgen.json)
-    rcut : Float
-        截断半径 (强制覆盖到 orbgen.json)
-
-    Returns
-    -------
-    Dict
-        ``{"nsw", "nsw_filename", "pertmags", "dft", "upf_path", "orb_path",
-           "family_label", "lmax", "rcut", "config_path"}``
-
-    Notes
-    -----
-    The grid-point-overridden config is written to ``<output_dir>/siab_config.json``
-    rather than to a temporary file: it is the input SIAB actually ran with (so
-    it is worth keeping), and it gives ``resolve_paths_from_json`` a stable base
-    directory.  Previously the base was a ``/tmp`` tempfile, so a relative
-    ``pseudo_dir`` such as the shipped examples' ``"./U.pbe-n-nc.upf"`` resolved
-    to ``/tmp/.../U.pbe-n-nc.upf`` and the pseudo-family build failed far away
-    from the cause.
-    """
-    import json as _json
-    import os as _os
-
-    # 1) 读出 JSON 内容并应用 (l_max, r_cut) —— 覆盖逻辑只有一份实现
-    content = siab_json.get_content()
-    if isinstance(content, bytes):
-        content = content.decode("utf-8")
-    cfg = apply_grid_point(_json.loads(content), int(lmax.value), float(rcut.value))
-
-    run_dir = _os.path.abspath(output_dir.value)
-    _os.makedirs(run_dir, exist_ok=True)
-    local_json = _os.path.join(run_dir, "siab_config.json")
-    with open(local_json, "w", encoding="utf-8") as f:
-        _json.dump(cfg, f, indent=2)
-
-    # 2) 跑 SIAB pipeline
-    result = generate_all_from_json(local_json, output_root=run_dir)
-
-    # 3) 解析 UPF / family label
-    from aiida_orbgen.calculations.pseudo_family import (
-        resolve_paths_from_json,
-    )
-
-    paths = resolve_paths_from_json(local_json, result)
-
-    return Dict(dict={
-        "nsw": result["nsw"],
-        "nsw_filename": result["nsw_filename"],
-        "pertmags": result["pertmags"],
-        "dft": result["dft"],
-        "upf_path": paths["upf_path"],
-        "orb_path": paths["orb_path"],
-        "family_label": paths["family_label"],
-        "config_path": local_json,
-        "lmax": int(lmax.value),
-        "rcut": float(rcut.value),
-    })
-
-
-# ===========================================================================
-#  单个 abacus.base 任务 inputs 构造
-# ===========================================================================
-
-
-def build_abacus_child_inputs(
-    dft_entry: Dict[str, Any],
-    *,
-    basis: str,                      # "pw" or "lcao_nsw"
-    code_label: str,
-    family_label: str,
-    parameters: Dict[str, Any],       # 来自 abacus.json: {"input": {...}}
-    queue_name: str,
-    num_mpi: int,
-    wallclock: int,
-    max_memory_kb: int,
-) -> Dict[str, Any]:
-    """构造一个 ``abacus.base`` workchain 的 inputs。
-
-    Parameters
-    ----------
-    dft_entry : dict
-        ``generate_all_from_json()`` 返回的 ``dft[i]`` 项
-    basis : str
-        ``"pw"`` (平面波) 或 ``"lcao_nsw"`` (数值原子轨道, nsw=原始 SIAB)
-    code_label, family_label : str
-    parameters : dict
-        来自 abacus.json 的 ``parameters`` 字段, 含 ``"input"`` 子 dict
-        (强制覆盖 SIAB 生成的 INPUT)
-    queue_name, num_mpi, wallclock, max_memory_kb : scheduler 参数
-    """
-    input_path = dft_entry["input"]
-    stru_path = dft_entry["stru"]
-
-    # 1) INPUT → Dict (过滤 AiiDA 托管 key + apply overrides)
-    siab_input = parse_incar(input_path)
-    merged = apply_input_overrides(siab_input)
-    # abacus.json 的 parameters.input 优先级最高
-    user_input = parameters.get("input", {}) if parameters else {}
-    merged.update(user_input)
-
-    # 2) 根据 basis 切 basis_type 和 ks_solver
-    if basis == "pw":
-        merged["basis_type"] = "pw"
-        # PW basis 不支持 scalapack_gvx，需要切换到 PW 支持的求解器
-        if merged.get("ks_solver") == "scalapack_gvx":
-            merged["ks_solver"] = "dav"
-        # PW basis 不支持 out_wfc_lcao 参数
-        merged.pop("out_wfc_lcao", None)
-    elif basis == "lcao_nsw":
-        merged["basis_type"] = "lcao"
-        # LCAO 时需要 orbital_dir (AiiDA 从 pseudo_family 注入)
-    else:
-        raise ValueError(f"Unknown basis: {basis!r}")
-
-    params = merged
-
-    # 3) STRU → ASE Atoms → StructureData
-    params_stru = read_stru(stru_path)
-    ase_atoms = params_stru_to_ase(params_stru)
-    structure = StructureData(ase=ase_atoms)
-
-    # 4) KPT: Gamma-only 1 1 1
-    kp = KpointsData()
-    kp.set_kpoints_mesh([1, 1, 1], offset=[0, 0, 0])
-
-    # 5) metadata.options
-    options = {
-        "resources": {
-            "num_machines": 1,
-            "num_mpiprocs_per_machine": num_mpi,
-            "tot_num_mpiprocs": num_mpi,
-        },
-        "max_wallclock_seconds": wallclock,
-        "max_memory_kb": max_memory_kb,
-        "queue_name": queue_name,
-        "withmpi": True,
-    }
-
-    return {
-        "abacus": {
-            "code": load_code(code_label),
-            "parameters": Dict(dict={"input": params}),
-            "structure": structure,
-            "metadata": {
-                "options": options,
-                "label": f"abacus-{dft_entry['folder']}-{basis}",
-                "description": (
-                    f"OrbgenCalcWorkChain | {dft_entry['folder']} | "
-                    f"basis={basis} | pert={dft_entry.get('pert')}"
-                ),
-            },
-        },
-        "kpoints": kp,
-        "pseudo_family": Str(family_label),
-    }
-
-
-# ===========================================================================
-#  CalcFunction: 从 abacus.base outputs 提取 energy
-# ===========================================================================
-
-
-@calcfunction
-def create_energies_dict(d: "Dict|dict|List") -> Dict:
-    """创建一个 energies 结果的 Dict 对象（用于 WorkChain 输出）。
-    
-    Parameters
-    ----------
-    d : Dict, dict, or List
-        包含 energies 结果的字典、AiiDA Dict 或 AiiDA List（包含能量数据）
-        
-    Returns
-    -------
-    Dict
-        AiiDA Dict 对象
-    """
-    # 如果是 List，说明是从子节点收集的原始数据，需要先计算
-    if hasattr(d, "__iter__") and not hasattr(d, "get_dict"):
-        # d 是一个 AiiDA List，计算能量差
-        energies_by_basis = {}
-        for item in d:
-            item_dict = item.get_dict() if hasattr(item, "get_dict") else dict(item)
-            basis = item_dict.get("basis_type", "unknown")
-            energy = item_dict.get("energy", item_dict.get("E_total"))
-            folder = item_dict.get("folder", "unknown")
-            pert = item_dict.get("pert")
-            if energy is None:
-                continue
-            energies_by_basis.setdefault(basis, []).append({
-                "folder": folder,
-                "energy": float(energy),
-                "pert": pert,
-            })
-        
-        delta_per_struct = []
-        if "pw" in energies_by_basis and "lcao" in energies_by_basis:
-            pw_by_folder = {e["folder"]: e for e in energies_by_basis["pw"]}
-            for e_lcao in energies_by_basis["lcao"]:
-                folder = e_lcao["folder"]
-                e_pw_entry = pw_by_folder.get(folder)
-                if e_pw_entry is None:
-                    continue
-                dE = abs(e_lcao["energy"] - e_pw_entry["energy"])
-                delta_per_struct.append({
-                    "folder": folder,
-                    "E_pw": e_pw_entry["energy"],
-                    "E_lcao_nsw": e_lcao["energy"],
-                    "dE": dE,
-                })
-        
-        delta_max = max((x["dE"] for x in delta_per_struct), default=0.0)
-        d_dict = {
-            "energies": energies_by_basis,
-            "delta_E_per_struct": delta_per_struct,
-            "delta_E_max_eV": float(delta_max),
-            "delta_E_max_meV": float(delta_max * 1000.0),
-        }
-    elif hasattr(d, "get_dict"):
-        # 如果是 AiiDA Dict，直接获取字典
-        d_dict = d.get_dict()
-    else:
-        # 如果是普通字典，直接使用
-        d_dict = dict(d)
-    
-    return Dict(dict=d_dict)
-
-
-@calcfunction
-def create_final_results(
-    l_max_val,
-    r_cut_val,
-    results_list,
-) -> Dict:
-    """创建最终结果的 Dict 对象（用于 WorkChain 输出）。
-
-    Parameters
-    ----------
-    l_max_val : int or float
-        最大角动量
-    r_cut_val : int or float
-        截断半径
-    results_list : list
-        子节点信息的列表
-
-    Returns
-    -------
-    Dict
-        AiiDA Dict 对象
-    """
-    # 提取值（如果是 AiiDA Data 类型）
-    if hasattr(l_max_val, "value"):
-        l_max_val = l_max_val.value
-    if hasattr(r_cut_val, "value"):
-        r_cut_val = r_cut_val.value
-    # results_list 应该是 AiiDA List 节点（包含原始 dicts）
-    # AiiDA 引擎会自动将传入的 list 包装为 List 节点
-    if hasattr(results_list, "get_list"):
-        children = list(results_list.get_list())
-    elif isinstance(results_list, (list, tuple)):
-        children = list(results_list)
-    else:
-        children = results_list
-
-    return Dict(dict={
-        "l_max": int(l_max_val) if isinstance(l_max_val, (int, float)) else l_max_val,
-        "r_cut": float(r_cut_val) if isinstance(r_cut_val, (int, float)) else r_cut_val,
-        "children": children,
-    })
-
-
-@calcfunction
-def create_grid_all_results(
-    grid_results_list,
-    tolerance_meV,
-    search_strategy,
-) -> Dict:
-    """创建 OrbgenGridSearchWorkChain 的 all_results Dict.
-
-    Parameters
-    ----------
-    grid_results_list : list
-        每项是 {l_max, r_cut, calc_pk, exit_status, is_finished_ok, ...} 字典
-    tolerance_meV : float
-    search_strategy : str
-
-    Returns
-    -------
-    Dict
-    """
-    tol = tolerance_meV.value if hasattr(tolerance_meV, "value") else float(tolerance_meV)
-    strat = search_strategy.value if hasattr(search_strategy, "value") else str(search_strategy)
-    if hasattr(grid_results_list, "get_list"):
-        grid = list(grid_results_list.get_list())
-    elif isinstance(grid_results_list, (list, tuple)):
-        grid = list(grid_results_list)
-    else:
-        grid = grid_results_list
-    return Dict(dict={
-        "grid": grid,
-        "tolerance_meV": float(tol),
-        "search_strategy": str(strat),
-    })
-
-
-@calcfunction
-def create_grid_summary(
-    n_grid_points,
-    n_tried,
-    n_passed,
-    n_failed,
-    tolerance_meV,
-    search_strategy,
-    best_l_max=None,
-    best_r_cut=None,
-    best_delta_per_atom_meV=None,
-    best_calc_pk=None,
-) -> Dict:
-    """创建 OrbgenGridSearchWorkChain 的 grid_summary Dict."""
-    def get_val(x, conv=None):
-        if x is None:
-            return None
-        if hasattr(x, "value"):
-            return x.value
-        return conv(x) if conv else x
-
-    return Dict(dict={
-        "n_grid_points": int(get_val(n_grid_points, int)),
-        "n_tried": int(get_val(n_tried, int)),
-        "n_passed": int(get_val(n_passed, int)),
-        "n_failed": int(get_val(n_failed, int)),
-        "best_l_max": get_val(best_l_max),
-        "best_r_cut": get_val(best_r_cut),
-        "best_delta_per_atom_meV": (
-            float(get_val(best_delta_per_atom_meV, float))
-            if get_val(best_delta_per_atom_meV) is not None
-            else None
-        ),
-        "best_calc_pk": get_val(best_calc_pk),
-        "tolerance_meV": float(get_val(tolerance_meV, float)),
-        "search_strategy": str(get_val(search_strategy)),
-    })
 
 
 # ===========================================================================
@@ -777,30 +420,8 @@ class OrbgenCalcWorkChain(WorkChain):
     # ------------------------------------------------------------------
 
     def _read_n_atoms_from_stru(self, dft_entry: dict) -> int:
-        """从 STRU 文件读取原子数 (用于 per-atom 能量归一化)."""
-        stru_path = dft_entry.get("stru")
-        if not stru_path or not Path(stru_path).is_file():
-            self.report(
-                f"  WARNING: STRU file not found at {stru_path!r}, "
-                f"n_atoms=1 fallback (per-atom disabled)"
-            )
-            return 1
-        try:
-            params_stru = read_stru(stru_path)
-        except Exception as exc:
-            self.report(
-                f"  WARNING: failed to parse STRU {stru_path!r}: {exc}; "
-                f"n_atoms=1 fallback"
-            )
-            return 1
-        species = params_stru.get("species", []) if isinstance(params_stru, dict) else []
-        n = sum(int(sp.get("natom", 0)) for sp in species if isinstance(sp, dict))
-        if n <= 0:
-            # 回退到 atom 列表长度
-            n = sum(
-                len(sp.get("atom", [])) for sp in species if isinstance(sp, dict)
-            )
-        return n if n > 0 else 1
+        """Atom count from the generated STRU (per-atom ΔE normalisation)."""
+        return n_atoms_from_stru(dft_entry.get("stru"), report=self.report)
 
     def inspect_children(self):
         info = self.ctx.children_info
@@ -1121,6 +742,9 @@ class OrbgenGridSearchWorkChain(WorkChain):
     - ``abacus_config`` (Dict)                - abacus.json (与 OrbgenCalcWorkChain 相同)
     - ``l_max_candidates`` (List of Int)     - 候选 l_max 列表 (升序)
     - ``r_cut_candidates`` (List of Float)   - 候选 r_cut 列表 (升序)
+    - ``candidates`` (List, optional)        - 显式 [[l_max, r_cut], ...] (非笛卡尔积)
+    - ``stop_on_first_valid`` (Bool, 默认 True) - iterative 找到即停; False = 跑完整个网格
+    - abacus_config 里的 ``max_l_max`` / ``max_r_cut`` 会裁剪候选网格
     - ``output_dir`` (Str)                   - SIAB 生成的根目录 (每个组合一个子目录)
     - ``search_strategy`` (Str, optional)    - "iterative" (默认, 从小到大逐个尝试)
                                                 或 "exhaustive" (全部并行跑)
@@ -1159,6 +783,9 @@ class OrbgenGridSearchWorkChain(WorkChain):
                    help="候选 l_max 列表 (升序排列). 与 orbgen_jsons 互斥.")
         spec.input("r_cut_candidates", valid_type=List, required=False,
                    help="候选 r_cut 列表 (升序排列, Å). 与 orbgen_jsons 互斥.")
+        spec.input("candidates", valid_type=List, required=False,
+                   help="显式候选列表 [[l_max, r_cut], ...] (非笛卡尔积), 用于只在已"
+                        "扫过的网格上补点. 与 l_max_candidates/r_cut_candidates 互斥.")
 
         # ---- 路径 ----
         spec.input("output_dir", valid_type=Str,
@@ -1168,6 +795,11 @@ class OrbgenGridSearchWorkChain(WorkChain):
         spec.input("search_strategy", valid_type=Str, required=False,
                    default=lambda: orm.Str("iterative"),
                    help='"iterative" (默认, 从小到大) 或 "exhaustive" (全部并行).')
+        spec.input("stop_on_first_valid", valid_type=Bool, required=False,
+                   default=lambda: orm.Bool(True),
+                   help="iterative 策略下找到第一个可接受组合就停 (默认). 设为 False "
+                        "则跑完整个网格再选最优 —— 只有 exhaustive 才等价于此前的"
+                        "行为, 现在两种策略都可以.")
 
         # ---- 透传给 OrbgenCalcWorkChain (optional) ----
         spec.input("code_label", valid_type=Str, required=False,
@@ -1254,6 +886,13 @@ class OrbgenGridSearchWorkChain(WorkChain):
         if not has_single and not has_multi:
             self.report(
                 "ERROR: 必须提供 siab_json 或 orbgen_jsons 之一"
+            )
+            return self.exit_codes.ERROR_INVALID_INPUT
+        if "candidates" in self.inputs and (
+            "l_max_candidates" in self.inputs or "r_cut_candidates" in self.inputs
+        ):
+            self.report(
+                "ERROR: candidates 与 l_max_candidates/r_cut_candidates 互斥"
             )
             return self.exit_codes.ERROR_INVALID_INPUT
 
@@ -1344,7 +983,15 @@ class OrbgenGridSearchWorkChain(WorkChain):
     def generate_grid_step(self):
         """生成 ``GridEntry`` 候选列表 (见 ``workflows/_grid.py``)."""
         grid = []
-        if self.ctx.use_multi_json:
+        if "candidates" in self.inputs:
+            pairs = self.inputs.candidates.get_list()
+            try:
+                grid = build_explicit_grid(pairs, self.inputs.siab_json)
+            except (TypeError, ValueError) as exc:
+                self.report(f"ERROR: invalid candidates: {exc}")
+                return self.exit_codes.ERROR_INVALID_INPUT
+            self.report(f"Mode: explicit candidates ({len(grid)} points)")
+        elif self.ctx.use_multi_json:
             # 多 JSON 模式: 每个 JSON 一个 (l_max, r_cut) 组合
             pairs = []
             for json_node in self.ctx.orbgen_jsons_list:
@@ -1358,6 +1005,17 @@ class OrbgenGridSearchWorkChain(WorkChain):
             # 单 JSON 模式: Cartesian product, 按 (l_max ↑, r_cut ↑) 排序
             grid = build_cartesian_grid(
                 self.ctx.l_max_list, self.ctx.r_cut_list, self.inputs.siab_json
+            )
+
+        # ``with_default_abacus`` forwards these two caps from abacus.json; only
+        # advanced.py used to honour them, everything else silently ignored them.
+        raw = self.inputs.abacus_config.get_dict()
+        before = len(grid)
+        grid = cap_grid(grid, raw.get("max_l_max"), raw.get("max_r_cut"))
+        if grid and len(grid) != before:
+            self.report(
+                f"  caps: max_l_max={raw.get('max_l_max')}, "
+                f"max_r_cut={raw.get('max_r_cut')} -> {before} -> {len(grid)} points"
             )
 
         self.ctx.grid = grid
@@ -1382,6 +1040,9 @@ class OrbgenGridSearchWorkChain(WorkChain):
             n_done=len(getattr(self.ctx, "grid_results", [])),
             best=getattr(self.ctx, "best", None),
             dry_run=self._dry_run,
+            stop_on_first_valid=bool(
+                self.inputs.get("stop_on_first_valid", orm.Bool(True)).value
+            ),
         )
 
     def launch_search_step(self):

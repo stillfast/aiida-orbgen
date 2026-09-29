@@ -29,7 +29,12 @@ from pathlib import Path
 from typing import Any
 
 from aiida_orbgen.utils.report.orbgen import select_best_point
-from aiida_orbgen.interfaces.nsw import apply_grid_point, folder_rcut
+from aiida_orbgen.interfaces.nsw import (
+    apply_grid_point,
+    folder_rcut,
+    legacy_point_dir_name,
+    point_dir_name as point_dir_name_of,
+)
 from aiida_orbgen.utils.report.validate import spillage_values, validate_orbital
 
 __all__ = [
@@ -489,7 +494,7 @@ def dft_root_from_input_json(
     static = _static_of(input_json)
     roots = static.get("dft_roots")
     if point is not None and isinstance(roots, dict) and point.r_cut is not None:
-        for key in (point_dir_name(point), f"{point.l_max},{folder_rcut(point.r_cut)}"):
+        for key in (*point_dir_aliases(point), f"{point.l_max},{folder_rcut(point.r_cut)}"):
             if roots.get(key):
                 return Path(str(roots[key])).expanduser()
     value = static.get("dft_root")
@@ -498,9 +503,18 @@ def dft_root_from_input_json(
 
 def point_dir_name(point) -> str:
     """Directory name of a grid point's orbital directory (``lmax4_rcut10``)."""
-    r_cut = point.r_cut
-    r_cut = int(r_cut) if r_cut is not None and float(r_cut).is_integer() else r_cut
-    return f"lmax{point.l_max}_rcut{r_cut}"
+    return point_dir_name_of(point.l_max, point.r_cut)
+
+
+def point_dir_aliases(point) -> list[str]:
+    """Every spelling this grid point's directory may have on disk.
+
+    The workflow wrote ``lmax4_rcut10p0`` before 2026-09-29; such trees must stay
+    readable even though new runs use ``lmax4_rcut10``.
+    """
+    current = point_dir_name(point)
+    legacy = legacy_point_dir_name(point.l_max, point.r_cut)
+    return [current] if legacy == current else [current, legacy]
 
 
 def _point_is_covered(root: Path, point) -> bool:
@@ -707,11 +721,11 @@ def generate_final_orbital(
     # Everything belonging to this grid point lands in its own directory, so a
     # report directory stays readable and several points can coexist:
     #   <out_dir>/lmax4_rcut10/{*.orb,*.param,*.png,orbgen_lmax4_rcut10.{json,log}}
-    work_dir = out_dir / f"lmax{point.l_max}_rcut{point.r_cut:g}"
+    work_dir = out_dir / point_dir_name(point)
     work_dir.mkdir(parents=True, exist_ok=True)
     result["dir"] = str(work_dir)
 
-    config_path = work_dir / f"orbgen_lmax{point.l_max}_rcut{point.r_cut:g}.json"
+    config_path = work_dir / f"orbgen_{point_dir_name(point)}.json"
     config_path.write_text(json.dumps(config, indent=4) + "\n", encoding="utf-8")
     result["config"] = str(config_path)
     result["config_source"] = config_source

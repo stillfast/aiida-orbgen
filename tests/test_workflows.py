@@ -40,7 +40,9 @@ from aiida_orbgen.workflows._grid import (
 )
 
 REPO = Path(__file__).resolve().parent.parent
-BATCH = REPO / "src" / "aiida_orbgen" / "workflows" / "batch.py"
+WORKFLOWS = REPO / "src" / "aiida_orbgen" / "workflows"
+BATCH = WORKFLOWS / "batch.py"
+SIAB = WORKFLOWS / "siab.py"
 
 # --- which SIAB? -----------------------------------------------------------
 # There are two ABACUS-CSW-NAO checkouts on this machine and they are not
@@ -98,9 +100,26 @@ def test_gridentry_label_and_dir_name():
     entry = GridEntry(l_max=4, r_cut=10.0, index=0)
     assert entry.label == "l_max=4, r_cut=10"
     assert entry.point == (4, 10.0)
-    # the workflow's spelling; the report layer deliberately uses lmax4_rcut10
-    assert work_dir_name(4, 10.0) == "lmax4_rcut10p0"
+
+    # one spelling everywhere (workflow *and* report): lmax4_rcut10
+    from aiida_orbgen.interfaces.nsw import legacy_point_dir_name, point_dir_name
+
+    assert work_dir_name(4, 10.0) == point_dir_name(4, 10.0) == "lmax4_rcut10"
     assert work_dir_name(3, 9) == "lmax3_rcut9"
+    assert work_dir_name(4, 9.4) == "lmax4_rcut9.4"
+
+    class _Point:
+        l_max, r_cut = 4, 10.0
+
+    from aiida_orbgen.utils.report.orbitals import (
+        point_dir_aliases, point_dir_name as report_point_dir_name,
+    )
+
+    assert report_point_dir_name(_Point()) == "lmax4_rcut10"
+    # trees written before 2026-09-29 used `lmax4_rcut10p0` and stay readable
+    assert point_dir_aliases(_Point()) == ["lmax4_rcut10", "lmax4_rcut10p0"]
+    assert legacy_point_dir_name(4, 10.0) == "lmax4_rcut10p0"
+    assert legacy_point_dir_name(3, 9) == "lmax3_rcut9"   # no `.` -> no `p0`
 
 
 def test_has_pending_iterative_stopping_rule():
@@ -176,6 +195,43 @@ def test_folder_rcut_convention():
     assert isinstance(folder_rcut(9.0), int)
     assert folder_rcut(9.4) == 9.4
     assert folder_rcut(10) == 10
+
+
+def test_stop_on_first_valid_keeps_iterating():
+    """``stop_on_first_valid=False`` = run the whole grid, then choose."""
+    grid = build_cartesian_grid([3, 4], [9.0], siab_json=None)
+    found = {"l_max": 3}
+    assert has_pending_iterative(grid, 1, best=found) is False
+    assert has_pending_iterative(grid, 1, best=found, stop_on_first_valid=False) is True
+    # still stops once everything has been tried
+    assert has_pending_iterative(grid, 2, best=found, stop_on_first_valid=False) is False
+
+
+def test_cap_grid_applies_the_abacus_limits():
+    from aiida_orbgen.workflows._grid import cap_grid
+
+    grid = build_cartesian_grid([3, 4, 5], [9.0, 11.0], siab_json="node")
+    capped = cap_grid(grid, max_l_max=4, max_r_cut=10.0)
+    assert [(e.l_max, e.r_cut) for e in capped] == [(3, 9.0), (4, 9.0)]
+    assert [e.index for e in capped] == [0, 1]          # indices re-numbered
+    assert cap_grid(grid) == grid
+
+
+def test_build_explicit_grid_accepts_pairs_only():
+    from aiida_orbgen.workflows._grid import build_explicit_grid
+
+    grid = build_explicit_grid([[4, 11.0], (4, 12)], siab_json="node")
+    assert [(e.l_max, e.r_cut) for e in grid] == [(4, 11.0), (4, 12.0)]
+    assert all(e.siab_json == "node" for e in grid)
+    with pytest.raises(ValueError):
+        build_explicit_grid([[4, 11.0, 12.0]], siab_json="node")
+
+
+def test_grid_search_spec_exposes_the_ported_options():
+    """The three capabilities taken from the deleted advanced.py."""
+    spec = OrbgenGridSearchWorkChain.spec()
+    for name in ("candidates", "stop_on_first_valid", "search_strategy"):
+        assert name in spec.inputs, f"{name} missing from the grid search spec"
 
 
 def test_workflow_classes_are_exported_from_one_place():
@@ -304,10 +360,26 @@ def test_resolve_upf_path_error_lists_where_it_looked(tmp_path):
 
 def test_run_siab_pipeline_keeps_the_config_next_to_the_run():
     """The grid-point config must not be a /tmp tempfile any more."""
-    source = BATCH.read_text(encoding="utf-8")
+    source = SIAB.read_text(encoding="utf-8")
     assert "import tempfile" not in source
     assert "NamedTemporaryFile" not in source
     assert "siab_config.json" in source
+
+
+def test_siab_facing_code_lives_in_one_module():
+    """The WorkChain module must only orchestrate.
+
+    Everything that shells out to SIAB, builds its INPUT/STRU or names its
+    folders belongs to ``workflows/siab.py`` (plus ``workflows/_grid.py`` for the
+    naming/stopping rules); this is what keeps ``batch.py`` readable.
+    """
+    batch = BATCH.read_text(encoding="utf-8")
+    for forbidden in ("generate_all_from_json(", "subprocess", "read_stru("):
+        assert forbidden not in batch, f"{forbidden!r} belongs in workflows/siab.py"
+    siab = SIAB.read_text(encoding="utf-8")
+    for expected in ("generate_all_from_json", "build_abacus_child_inputs",
+                     "run_siab_pipeline"):
+        assert expected in siab
 
 
 # ---------------------------------------------------------------------------
