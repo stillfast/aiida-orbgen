@@ -465,9 +465,10 @@ def _build_siab_config(calc_node, l_max: int, r_cut: float,
             config = json.load(handle)
     else:
         config = _read_siab_json(calc_node)
-    # 覆盖逻辑只有一份实现 (interfaces.nsw.apply_grid_point): 这里以前自己拼
-    # bessel_nao_rcut, 与 run_siab_pipeline 的 float 写法不一致, 于是同一个格
-    # 网格点在两条路径上会得到 ``9au`` 和 ``9.0au`` 两个名字。
+    # One implementation only (interfaces.nsw.apply_grid_point): this used to
+    # build bessel_nao_rcut itself, with a float spelling that disagreed with
+    # run_siab_pipeline, so the same grid point ended up named both ``9au`` and
+    # ``9.0au`` depending on which layer derived the config.
     return apply_grid_point(config, l_max, r_cut)
 
 
@@ -1054,10 +1055,11 @@ def generate_final_orbital(
     )
     result["files"] = [str(path) for path in produced]
 
-    # ---- 5. 校验产物内容 (不能只看扩展名) --------------------------------
-    # 曾经出现过文件名写着 ``4s3p2d2f1g`` 而文件头 ``Number of Gorbital--> 0``
-    # 的情况 (vloc_aux 写在 orbitals[i] 顶层被 SIAB 忽略), 只按扩展名是查不出来
-    # 的, 所以这里把每个 .orb 读回来与请求的 nzeta 逐 l 对比.
+    # ---- 5. validate the products (the extension is not enough) -----------
+    # A run once delivered ``U_gga_10au_100Ry_4s3p2d2f1g.orb`` whose header
+    # said ``Number of Gorbital--> 0`` (vloc_aux was written outside
+    # model_kwargs and SIAB ignored it); reading the file back and comparing
+    # the radial functions per l against the requested nzeta catches that.
     result.update(_summarise_products(work_dir, config, log_path, produced))
 
     if returncode:

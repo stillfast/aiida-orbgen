@@ -1,16 +1,16 @@
 """
-NSW (Numerical Spherical Wave) 接口
+NSW (Numerical Spherical Wave) interface
 
-生成 NSW 原始球 Bessel 轨道文件。
+Generate NSW primitive spherical Bessel orbital files.
 
-对应文件: {elem}_{xc}_{rcut}au_{ecut}Ry_{nzeta_str}.orb
-例: U_gga_9au_100Ry_27s27p26d26f25g.orb
+Corresponding file: {elem}_{xc}_{rcut}au_{ecut}Ry_{nzeta_str}.orb
+Example: U_gga_9au_100Ry_27s27p26d26f25g.orb
 
-内部依赖:
-- SIAB.spillage.radial._nbes      : 计算每个角动量的 Bessel 数量
-- SIAB.spillage.radial.jl_raw     : 生成 truncated spherical Bessel
-- SIAB.spillage.radial.jl_reduce  : reduced 类型约化
-- SIAB.spillage.orbio.write_nao   : 写入 .orb 文件
+Internal dependencies:
+- SIAB.spillage.radial._nbes      : count the Bessel functions per angular momentum
+- SIAB.spillage.radial.jl_raw     : generate truncated spherical Bessel functions
+- SIAB.spillage.radial.jl_reduce  : reduction of the 'reduced' type
+- SIAB.spillage.orbio.write_nao   : write the .orb file
 """
 
 import copy
@@ -92,20 +92,20 @@ def apply_grid_point(config: dict, l_max: int, r_cut: float) -> dict:
 def compute_nbes_per_l(rcut: float, ecut: float, lmaxmax: int,
                        primitive_type: str = "reduced") -> list:
     """
-    计算每个角动量的 Bessel 函数数量。
+    Compute the number of Bessel functions for each angular momentum.
 
-    对应 SIAB.spillage.radial._nbes。
+    Corresponds to SIAB.spillage.radial._nbes.
 
     Parameters
     ----------
     rcut : float
-        截断半径 (Bohr)
+        Cutoff radius (Bohr)
     ecut : float
-        动能截断 (Ry)
+        Kinetic-energy cutoff (Ry)
     lmaxmax : int
-        最大角动量
+        Maximum angular momentum
     primitive_type : str
-        原生基底类型: 'reduced' 或 'normalized'
+        Primitive basis type: 'reduced' or 'normalized'
 
     Returns
     -------
@@ -117,7 +117,7 @@ def compute_nbes_per_l(rcut: float, ecut: float, lmaxmax: int,
     nbes_list = [_nbes(l, rcut, ecut) for l in range(lmaxmax + 1)]
 
     if primitive_type == "reduced":
-        # reduced 类型每个 l 减少 1 (约化条件)
+        # The 'reduced' type drops one function per l (reduction condition)
         nbes_list = [n - 1 for n in nbes_list]
 
     return nbes_list
@@ -130,28 +130,28 @@ def generate_nsw(
     dr: float = 0.01,
 ) -> str:
     """
-    生成 NSW 原始轨道文件。
+    Generate an NSW primitive orbital file.
 
     Parameters
     ----------
     json_config : dict
-        JSON 配置字典，应包含:
-        - element: 元素符号 (e.g. "U")
-        - bessel_nao_rcut: 截断半径列表 (e.g. [9])
-        - ecutjy: 球Bessel动能截断 (e.g. 100)
-        - primitive_type: 'reduced' 或 'normalized' (default 'reduced')
-        - xc: 泛函名 (default 'gga')
+        JSON config dict, which should contain:
+        - element: element symbol (e.g. "U")
+        - bessel_nao_rcut: list of cutoff radii (e.g. [9])
+        - ecutjy: spherical-Bessel kinetic-energy cutoff (e.g. 100)
+        - primitive_type: 'reduced' or 'normalized' (default 'reduced')
+        - xc: functional name (default 'gga')
     output_dir : str
-        输出目录 (default "./primitive_jy")
+        Output directory (default "./primitive_jy")
     lmaxmax : int, optional
-        最大角动量, 默认从 geoms[0] 中读取, 缺省为 4
+        Maximum angular momentum; read from geoms[0] by default, 4 if absent
     dr : float
-        径向网格步长 (Bohr), default 0.01
+        Radial grid step (Bohr), default 0.01
 
     Returns
     -------
     str
-        生成的 .orb 文件的绝对路径
+        Absolute path of the generated .orb file
 
     Examples
     --------
@@ -165,12 +165,12 @@ def generate_nsw(
     >>> print(orb_path)
     /home/user/project/primitive_jy/U_gga_9au_100Ry_27s27p26d26f25g.orb
     """
-    # 解析参数
+    # Parse the arguments
     elem = json_config["element"]
     rcut_list = json_config["bessel_nao_rcut"]
     rcut_raw = rcut_list[0] if isinstance(rcut_list, list) else rcut_list
     rcut = float(rcut_raw)
-    # 保持原类型 (int 或 float), 使输出格式与 SIAB 一致
+    # Keep the original type (int or float) so the output format matches SIAB
     rcut_for_write = rcut_raw if isinstance(rcut_raw, (int, float)) else rcut
     ecut_raw = json_config["ecutjy"]
     ecut = float(ecut_raw)
@@ -178,7 +178,7 @@ def generate_nsw(
     primitive_type = json_config.get("primitive_type", "reduced")
     xc = json_config.get("xc", "gga")
 
-    # 如果未指定 lmaxmax，尝试从 geoms 读取
+    # If lmaxmax was not given, try to read it from geoms
     if lmaxmax is None:
         geoms = json_config.get("geoms", [])
         if geoms and "lmaxmax" in geoms[0]:
@@ -186,24 +186,24 @@ def generate_nsw(
         else:
             lmaxmax = 4
 
-    # 计算每个角动量的 Bessel 数量
+    # Number of Bessel functions per angular momentum
     nbes_list = compute_nbes_per_l(rcut, ecut, lmaxmax, primitive_type)
 
-    # 生成 nzeta 字符串
+    # Build the nzeta string
     nzeta_str = _nzeta_to_string(nbes_list)
 
-    # 生成文件名
+    # Build the file name
     filename = f"{elem}_{xc}_{int(rcut)}au_{int(ecut)}Ry_{nzeta_str}.orb"
 
-    # 创建输出目录
+    # Create the output directory
     os.makedirs(output_dir, exist_ok=True)
     filepath = os.path.join(output_dir, filename)
 
-    # 调用 SIAB 内部函数生成轨道
+    # Call SIAB's internal routine to generate the orbitals
     nr = int(rcut / dr) + 1
     r_grid = np.linspace(0, rcut, nr)
 
-    # 生成 truncated spherical Bessel
+    # Generate truncated spherical Bessel functions
     chi = []
     for l in range(lmaxmax + 1):
         nq = nbes_list[l] if primitive_type == "normalized" else nbes_list[l] + 1
@@ -213,7 +213,7 @@ def generate_nsw(
             zeta_functions.append(chi_lq)
         chi.append(zeta_functions)
 
-    # 对 reduced 类型做约化
+    # Apply the reduction for the 'reduced' type
     if primitive_type == "reduced":
         chi_reduced = []
         for l in range(lmaxmax + 1):
@@ -226,7 +226,7 @@ def generate_nsw(
             chi_reduced.append(chi_l_reduced)
         chi = chi_reduced
 
-    # 写入文件
+    # Write the file
     _write_nao(
         fpath=filepath,
         elem=elem,
@@ -241,7 +241,7 @@ def generate_nsw(
 
 
 def _nzeta_to_string(nzeta: list) -> str:
-    """将 nzeta 列表转为 zeta 字符串."""
+    """Convert the nzeta list into a zeta string."""
     SPECTRUM = "spdfghijklmnopqrstuvwxyz"
     return "".join(
         f"{nz}{sym}" for nz, sym in zip(nzeta, SPECTRUM) if nz > 0
@@ -250,19 +250,19 @@ def _nzeta_to_string(nzeta: list) -> str:
 
 def _jl_raw(l: int, q: int, r: np.ndarray, rcut: Optional[float] = None,
             deriv: int = 0) -> np.ndarray:
-    """SIAB.spillage.radial.jl_raw 的本地封装."""
+    """Local wrapper around SIAB.spillage.radial.jl_raw."""
     from SIAB.spillage.radial import jl_raw
     return jl_raw(l, q, r, rcut=rcut, deriv=deriv)
 
 
 def _jl_reduce(l: int, n: int, rcut: float, from_raw: bool = True) -> np.ndarray:
-    """SIAB.spillage.radial.jl_reduce 的本地封装."""
+    """Local wrapper around SIAB.spillage.radial.jl_reduce."""
     from SIAB.spillage.radial import jl_reduce
     return jl_reduce(l, n, rcut, from_raw=from_raw)
 
 
 def _write_nao(fpath: str, elem: str, ecut: float, rcut: float,
                nr: int, dr: float, chi: list) -> None:
-    """SIAB.spillage.orbio.write_nao 的本地封装."""
+    """Local wrapper around SIAB.spillage.orbio.write_nao."""
     from SIAB.spillage.orbio import write_nao
     write_nao(fpath, elem, ecut, rcut, nr, dr, chi)

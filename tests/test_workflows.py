@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -382,8 +383,19 @@ def test_siab_facing_code_lives_in_one_module():
     naming/stopping rules); this is what keeps ``batch.py`` readable.
     """
     batch = BATCH.read_text(encoding="utf-8")
-    for forbidden in ("generate_all_from_json(", "subprocess", "read_stru("):
-        assert forbidden not in batch, f"{forbidden!r} belongs in workflows/siab.py"
+    # What is forbidden is *code* that shells out, not the word: batch.py's
+    # docstrings legitimately explain the dry-run bug ("the run still launched the
+    # SIAB subprocess"), so match call sites instead of a bare substring.
+    forbidden = (
+        r"^\s*import subprocess\b",
+        r"subprocess\.(run|Popen|call|check_call|check_output)\b",
+        r"generate_all_from_json\(",
+        r"read_stru\(",
+    )
+    for pattern in forbidden:
+        assert not re.search(pattern, batch, re.MULTILINE), (
+            f"{pattern!r} belongs in workflows/siab.py"
+        )
     siab = SIAB.read_text(encoding="utf-8")
     for expected in ("generate_all_from_json", "build_abacus_child_inputs",
                      "run_siab_pipeline"):

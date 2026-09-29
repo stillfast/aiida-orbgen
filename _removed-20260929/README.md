@@ -1,8 +1,10 @@
 # Modules removed on 2026-09-29 (batch 1 of the refactor)
 
-Both files had **zero remaining callers** and are kept here only so nothing is
-lost (this checkout is not a git repository yet — `git init` + a first commit
-would be better).
+Three modules had **zero remaining callers**. Their source files are no longer in
+the tree (they were dropped once the repository was under git, so they stay
+recoverable with `git show <commit-before-the-drop>:<path>`, and in
+`.refactor-backup-*.tar.gz`); this table keeps the *reason*, which is the part
+worth reading later.
 
 | file | why it was removed | what replaced it |
 |---|---|---|
@@ -10,4 +12,5 @@ would be better).
 | `advanced.py` | the second ``OrbgenGridSearchWorkChain`` (same ``process_label``, colliding exit codes, unreachable from any entry point). Its three unique capabilities were ported into the live grid search first: ``stop_on_first_valid``, an explicit ``candidates`` list, and the ``max_l_max`` / ``max_r_cut`` caps. Its per-*system* ΔE comparison was deliberately **not** ported (the rest of the stack uses per-atom). | `workflows/batch.py` + `workflows/_grid.py` |
 | `orbgen_report.py` | superseded by the `utils/report/` package (`orbgen.py` + `orbitals.py` + `assemble.py` + `validate.py`); nothing imported it any more, and it read a `tolerance_meV` input that no spec defines | `utils/report/` |
 
-Restore with `mv _removed-20260929/<file> src/aiida_orbgen/...` if needed.
+Restore with `git show <commit>:<path> > <path>` (or from the backup tarball) if
+one of them is ever needed again.

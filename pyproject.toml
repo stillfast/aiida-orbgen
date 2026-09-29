@@ -42,7 +42,7 @@ aiida-orbgen = "aiida_orbgen.cli.run:main"
 "aiida_orbgen.incar" = "aiida_orbgen.data.input:IncarData"
 
 [project.entry-points."aiida.workflows"]
-# 两级 workchain 架构 (flowchart)
+# Two-level workchain architecture (flowchart)
 "orbgen.calc"   = "aiida_orbgen.workflows.batch:OrbgenCalcWorkChain"
 "orbgen.gridsearch" = "aiida_orbgen.workflows.batch:OrbgenGridSearchWorkChain"
 

@@ -1,53 +1,53 @@
 """
-SIAB (ABACUS-CSW-NAO) Python API 接口文档
+SIAB (ABACUS-CSW-NAO) Python API reference
 
-本文档描述了如何使用Python API调用SIAB库的各个功能模块。
-主要涉及两个核心流程：
-1. JSON配置 -> NSW生成 -> INPUT文件生成
-2. DFT计算结果 + NSW -> Orbgen优化 -> 轨道文件
+This document describes how to call the various functional modules of the SIAB library through the Python API.
+It covers two core workflows:
+1. JSON config -> NSW generation -> INPUT file generation
+2. DFT results + NSW -> Orbgen optimization -> orbital files
 
-代码库路径: /home/liguozhou/install/ABACUS-CSW-NAO
+Library path: /home/liguozhou/install/ABACUS-CSW-NAO
 """
 
 # =============================================================================
-# 第一部分：JSON配置解析与参数验证
+# Part 1: JSON config parsing and parameter validation
 # =============================================================================
 
 """
-模块: SIAB.io.param
+Module: SIAB.io.param
 
-核心功能：
-- 读取JSON格式的输入配置文件
-- 参数校验与分组
-- 几何结构与轨道参数关联
+Core features:
+- Read the JSON input configuration file
+- Validate and group parameters
+- Associate geometries with orbital parameters
 """
 
 from SIAB.io.param import read, ParamAssert, orb_link_geom, group
 
-# 使用示例:
+# Usage example:
 """
-# 读取JSON配置文件
+# Read the JSON config file
 glbparams, dftparams, spillparams, compute, iop = read('input.json')
 
-# 返回值说明:
-# - glbparams: 全局参数，包含 element, bessel_nao_rcut
-# - dftparams: DFT计算参数 (ABACUS INPUT参数)
-# - spillparams: Spillage优化参数 (geoms, orbitals, primitive_type等)
-# - compute: 计算环境参数 (abacus_command, mpi_command等)
-# - iop: 内部优化参数 (__iop开头)
+# Return values:
+# - glbparams: global parameters, including element, bessel_nao_rcut
+# - dftparams: DFT calculation parameters (ABACUS INPUT parameters)
+# - spillparams: Spillage optimization parameters (geoms, orbitals, primitive_type, etc.)
+# - compute: computing environment parameters (abacus_command, mpi_command, etc.)
+# - iop: internal optimization parameters (prefixed with __iop)
 """
 
 # =============================================================================
-# 第二部分：NSW生成与ABACUS作业构建
+# Part 2: NSW generation and ABACUS job construction
 # =============================================================================
 
 """
-模块: SIAB.abacus.api
+Module: SIAB.abacus.api
 
-核心功能：
-- 构建ABACUS DFT计算作业
-- 生成INPUT和STRU输入文件
-- 原子结构定义
+Core features:
+- Build ABACUS DFT calculation jobs
+- Generate the INPUT and STRU input files
+- Define atomic structures
 """
 
 from SIAB.abacus.api import (
@@ -68,9 +68,9 @@ from SIAB.abacus.io import (
 
 from SIAB.io.convention import dft_folder
 
-# 使用示例:
+# Usage example:
 """
-# 1. 构建原子种类信息
+# 1. Build atomic species information
 atomspecies = _build_atomspecies(
     elem='Si',
     pp='Si.upf',
@@ -80,7 +80,7 @@ atomspecies = _build_atomspecies(
     primitive_type='reduced'
 )
 
-# 2. 构建单个DFT计算case
+# 2. Build a single DFT calculation case
 folder = _build_case(
     proto='dimer',
     pertkind='stretch',
@@ -90,7 +90,7 @@ folder = _build_case(
     dftspecific={'gamma_only': '1'}
 )
 
-# 3. 批量构建ABACUS作业
+# 3. Build ABACUS jobs in batch
 jobs = build_abacus_jobs(
     atomspecies=[{'elem': 'Si', 'ecutjy': 40, 'zval': 0}],
     rcuts=[7],
@@ -99,7 +99,7 @@ jobs = build_abacus_jobs(
     spill_guess='atomic'
 )
 
-# 4. 计算nzeta (每个角动量的zeta函数数量)
+# 4. Compute nzeta (number of zeta functions per angular momentum)
 nzeta, ecut, lmaxmax = _cal_nzeta(
     rcut=7,
     ecut=40,
@@ -107,10 +107,10 @@ nzeta, ecut, lmaxmax = _cal_nzeta(
     less_dof=0
 )
 
-# 5. 生成INPUT文件内容
+# 5. Generate the INPUT file content
 input_text = dftparam_to_text(dftparam)
 
-# 6. 生成STRU文件内容
+# 6. Generate the STRU file content
 stru_text, natom = structure_to_text(
     shape='dimer',
     element='Si',
@@ -122,7 +122,7 @@ stru_text, natom = structure_to_text(
     forb=None
 )
 
-# 7. 自动设置DFT参数
+# 7. Auto-set DFT parameters
 dftparam = autoset({
     'ecutwfc': 60,
     'basis_type': 'lcao',
@@ -131,15 +131,15 @@ dftparam = autoset({
 """
 
 # =============================================================================
-# 第三部分：轨道优化与Orbgen
+# Part 3: Orbital optimization and Orbgen
 # =============================================================================
 
 """
-模块: SIAB.orb.api
+Module: SIAB.orb.api
 
-核心功能：
-- 创建轨道级联优化实例
-- 管理轨道初始化和优化流程
+Core features:
+- Create an orbital cascade optimization instance
+- Manage orbital initialization and the optimization workflow
 """
 
 from SIAB.orb.api import (
@@ -149,9 +149,9 @@ from SIAB.orb.api import (
 
 from SIAB.orb.cascade import OrbgenCascade
 
-# 使用示例:
+# Usage example:
 """
-# 创建轨道级联实例
+# Create an orbital cascade instance
 cascade = GetOrbCascadeInstance(
     elem='Si',
     rcut=7,
@@ -169,24 +169,24 @@ cascade = GetOrbCascadeInstance(
             'nzeta': [1, 1, 1],
             'folders': ['Si-dimer-1.75-7au'],
             'nbnds': [20],
-            'iorb_frozen': 0,  # 冻结第一个轨道的系数
+            'iorb_frozen': 0,  # freeze the coefficients of the first orbital
         }
     ],
-    mode='jy',  # 或 'pw'
-    optimizer='torch.swats'  # 或 'scipy.bfgs'
+    mode='jy',  # or 'pw'
+    optimizer='torch.swats'  # or 'scipy.bfgs'
 )
 
-# 执行优化
+# Run the optimization
 cascade, spillage_values = cascade.opt(
     diagnosis=True,
     options={'maxiter': 100},
     nthreads=4
 )
 
-# 导出轨道文件
+# Export the orbital files
 cascade.to_file(outdir='./output')
 
-# 从已有cascade派生新实例 (添加更多轨道)
+# Derive a new instance from an existing cascade (adding more orbitals)
 new_cascade = DeriveCascadeInstance(
     elem='Si',
     rcut=7,
@@ -203,16 +203,16 @@ new_cascade = DeriveCascadeInstance(
 """
 
 # =============================================================================
-# 第四部分：Spillage优化核心
+# Part 4: Spillage optimization core
 # =============================================================================
 
 """
-模块: SIAB.spillage.spillage
+Module: SIAB.spillage.spillage
 
-核心功能：
-- 从DFT计算结果提取参考数据
-- 生成轨道初始猜测
-- 计算spillage值
+Core features:
+- Extract reference data from DFT results
+- Generate the initial orbital guess
+- Compute the spillage value
 """
 
 from SIAB.spillage.spillage import (
@@ -223,13 +223,13 @@ from SIAB.spillage.spillage import (
 
 from SIAB.spillage.spilltorch import SpillTorch_jy, SpillTorch_pw
 
-# 使用示例:
+# Usage example:
 """
-# 1. 从JY模式DFT输出提取数据
+# 1. Extract data from JY-mode DFT output
 data = _jy_data_extract('OUT.ABACUS')
-# 返回: {natom, nzeta, wk, S, T, C}
+# Returns: {natom, nzeta, wk, S, T, C}
 
-# 2. 从原子计算结果生成初始轨道系数
+# 2. Generate initial orbital coefficients from the atomic calculation
 coef = initgen_jy(
     outdir='Si-monomer-0-7au/OUT.ABACUS',
     nzeta=[1, 1, 0],
@@ -237,16 +237,16 @@ coef = initgen_jy(
     nbes_gen=None,
     diagnosis=True
 )
-# 返回: coef[l][zeta][q] 格式的系数
+# Returns: coefficients in coef[l][zeta][q] form
 
-# 3. 从PW模式计算结果生成初始轨道系数
+# 3. Generate initial orbital coefficients from the PW-mode calculation
 coef = initgen_pw(
     orb_mat='orb_matrix.0.dat',
     nzeta=[1, 1, 0],
     ibands='all'
 )
 
-# 4. 使用Torch优化器进行spillage优化
+# 4. Run spillage optimization with the Torch optimizer
 minimizer = SpillTorch_jy()
 minimizer.config_add('OUT.ABACUS', weight=(0, 1.0))
 coefs_opt, spillage = minimizer.opt(
@@ -261,15 +261,15 @@ coefs_opt, spillage = minimizer.opt(
 """
 
 # =============================================================================
-# 第五部分：完整Workflow接口
+# Part 5: Complete workflow interface
 # =============================================================================
 
 """
-模块: SIAB.driver.main
+Module: SIAB.driver.main
 
-核心功能：
-- 完整的ABACUS-ORBGEN工作流程
-- 从JSON配置到轨道文件的一站式解决方案
+Core features:
+- Complete ABACUS-ORBGEN workflow
+- One-stop solution from the JSON config to the orbital files
 """
 
 from SIAB.driver.main import (
@@ -278,12 +278,12 @@ from SIAB.driver.main import (
     minimize_spillage,
 )
 
-# 使用示例:
+# Usage example:
 """
-# 1. 初始化workflow (读取参数)
+# 1. Initialize the workflow (read parameters)
 glbparams, dftparams, spillparams, compute, iop = init('input.json')
 
-# 2. 运行DFT计算
+# 2. Run the DFT calculation
 jobs = rundft(
     atomspecies=[{'elem': 'Si', 'ecutjy': 40, 'zval': 0}],
     rcuts=[7],
@@ -293,7 +293,7 @@ jobs = rundft(
     compparam={'abacus_command': 'mpirun -np 8 abacus'}
 )
 
-# 3. 运行spillage优化
+# 3. Run the spillage optimization
 minimize_spillage(
     elem='Si',
     ecut=40,
@@ -309,15 +309,15 @@ minimize_spillage(
 """
 
 # =============================================================================
-# 第六部分：工具函数
+# Part 6: Utility functions
 # =============================================================================
 
 """
-模块: SIAB.io.convention
+Module: SIAB.io.convention
 
-核心功能：
-- 文件和文件夹命名约定
-- 轨道参数字符串生成
+Core features:
+- File and folder naming conventions
+- Orbital parameter string generation
 """
 
 from SIAB.io.convention import (
@@ -327,54 +327,54 @@ from SIAB.io.convention import (
     nzeta_string,
 )
 
-# 使用示例:
+# Usage example:
 """
-# 1. 生成DFT计算文件夹名
+# 1. Generate a DFT calculation folder name
 folder = dft_folder('Si', 'dimer', 2.0, 7)
-# 返回: 'Si-dimer-2.00-7au'
+# Returns: 'Si-dimer-2.00-7au'
 
-# 2. 生成轨道文件夹名
+# 2. Generate an orbital folder name
 folder = orb_folder('Si', [1, 1, 0])
-# 返回: 'Si_s1p1'
+# Returns: 'Si_s1p1'
 
-# 3. 生成轨道文件名
+# 3. Generate an orbital file name
 filename = orb_filename('Si', 7, 40, [1, 1, 0])
-# 返回: 'Si_gga_7au_40Ry_1s1p.orb'
+# Returns: 'Si_gga_7au_40Ry_1s1p.orb'
 
-# 4. 生成nzeta字符串
+# 4. Generate the nzeta string
 nz_str = nzeta_string([1, 1, 1, 0])
-# 返回: '1s1p1d'
+# Returns: '1s1p1d'
 """
 
 """
-模块: SIAB.spillage.radial
+Module: SIAB.spillage.radial
 
-核心功能：
-- 球Bessel函数相关计算
-- 径向积分
+Core features:
+- Spherical Bessel function related calculations
+- Radial integrals
 """
 
 from SIAB.spillage.radial import (
-    _nbes,  # 计算给定l, rcut, ecut下的Bessel函数数量
-    jl_reduce,  # Bessel函数约化
+    _nbes,  # number of Bessel functions for the given l, rcut, ecut
+    jl_reduce,  # Bessel function reduction
 )
 
-# 使用示例:
+# Usage example:
 """
-# 计算l=0, rcut=7, ecut=40时的Bessel函数数量
+# Compute the number of Bessel functions for l=0, rcut=7, ecut=40
 n = _nbes(0, 7, 40)
-# 返回: Bessel函数数量
+# Returns: the number of Bessel functions
 
-# 约化Bessel函数
+# Reduce the Bessel functions
 reduced = jl_reduce(l=0, nbes=21, rcut=7)
 """
 
 # =============================================================================
-# 完整API调用示例
+# Complete API usage example
 # =============================================================================
 
 """
-以下是一个完整的Python脚本示例，展示了如何使用API：
+Below is a complete Python script showing how to use the API:
 
 ```python
 import os
@@ -387,10 +387,10 @@ from SIAB.orb.api import GetOrbCascadeInstance
 from SIAB.orb.cascade import OrbgenCascade
 from SIAB.spillage.spillage import initgen_jy
 
-# 步骤1: 读取配置
+# Step 1: read the configuration
 glbparams, dftparams, spillparams, compparam, iop = read('config.json')
 
-# 步骤2: 构建并运行DFT作业
+# Step 2: build and run the DFT jobs
 atomspecies = _build_atomspecies(
     elem=glbparams['element'],
     pp=os.path.join(spillparams['pseudo_dir'], f'{glbparams["element"]}.upf'),
@@ -400,7 +400,7 @@ atomspecies = _build_atomspecies(
     primitive_type=spillparams['primitive_type']
 )
 
-# 步骤3: 构建ABACUS作业
+# Step 3: build the ABACUS jobs
 jobs = build_abacus_jobs(
     atomspecies=[{'elem': glbparams['element'], 
                   'ecutjy': spillparams.get('ecutjy', dftparams['ecutwfc']),
@@ -411,7 +411,7 @@ jobs = build_abacus_jobs(
     spill_guess=spillparams.get('spill_guess')
 )
 
-# 步骤4: 等待DFT计算完成后，创建轨道优化cascade
+# Step 4: once the DFT calculations finish, create the orbital optimization cascade
 cascade = GetOrbCascadeInstance(
     elem=glbparams['element'],
     rcut=glbparams['bessel_nao_rcut'][0],
@@ -424,77 +424,77 @@ cascade = GetOrbCascadeInstance(
     optimizer=spillparams.get('optimizer', 'torch.swats')
 )
 
-# 步骤5: 执行优化
+# Step 5: run the optimization
 cascade, spillages = cascade.opt(diagnosis=True)
 
-# 步骤6: 导出轨道文件
+# Step 6: export the orbital files
 cascade.to_file(outdir='./orbitals')
 
-print(f"轨道优化完成，最终spillage值: {spillages}")
+print(f"Orbital optimization complete, final spillage: {spillages}")
 ```
 """
 
 # =============================================================================
-# JSON输入配置格式说明
+# JSON input configuration format
 # =============================================================================
 
 """
-JSON输入文件示例:
+Example JSON input file:
 
 {
-    // 计算环境配置
+    // computing environment configuration
     "environment": "",
     "mpi_command": "mpirun -np 8",
     "abacus_command": "abacus",
 
-    // 元素信息
+    // element information
     "element": "Si",
     "pseudo_dir": "Si.upf",
 
-    // 基底类型: jy (球Bessel) 或 pw (平面波)
+    // basis type: jy (spherical Bessel) or pw (plane wave)
     "fit_basis": "jy",
 
-    // 平面波动能截断 (Ry)
+    // plane-wave kinetic energy cutoff (Ry)
     "ecutwfc": 60,
 
-    // 球Bessel动能截断 (Ry)
+    // spherical Bessel kinetic energy cutoff (Ry)
     "ecutjy": 40,
 
-    // 轨道截断半径 (au)
+    // orbital cutoff radius (au)
     "bessel_nao_rcut": [7, 10],
 
-    // 原始基底类型: reduced 或 normalized
+    // primitive basis type: reduced or normalized
     "primitive_type": "reduced",
 
-    // 轨道初始猜测方式
+    // orbital initial guess method
     "spill_guess": "atomic",
 
-    // 优化器配置
+    // optimizer configuration
     "optimizer": "scipy.bfgs",
     "max_steps": 9000,
     "nthreads_rcut": 4,
 
-    // 几何结构配置
+    // geometry configuration
     "geoms": [
         {
-            "proto": "dimer",           // 结构原型: dimer, trimer, monomer等
-            "pertkind": "stretch",       // 扰动类型: stretch, shear, twist
-            "pertmags": [1.62, 1.82, 2.22, 2.72, 3.22],  // 键长列表 (Angstrom)
-            "nbands": 20,               // 计算使用的能带数
-            "nspin": 1,                 // 自旋极化: 1 或 2
-            "lmaxmax": 2,               // 最大角动量
-            "celldm": 30                // 晶格常数 (Bohr)
+            "proto": "dimer",           // structure prototype: dimer, trimer, monomer, etc.
+            "pertkind": "stretch",       // perturbation kind: stretch, shear, twist
+            "pertmags": [1.62, 1.82, 2.22, 2.72, 3.22],  // list of bond lengths (Angstrom)
+            "nbands": 20,               // number of bands used in the calculation
+            "nspin": 1,                 // spin polarization: 1 or 2
+            "lmaxmax": 2,               // maximum angular momentum
+            "celldm": 30                // lattice constant (Bohr)
         }
     ],
 
-    // 轨道生成配置
+    // orbital generation configuration
     "orbitals": [
         {
-            "nzeta": [1, 1, 0],         // 每个角动量的zeta数 [s, p, d, ...]
-            "geoms": [0],               // 引用的几何结构索引
-            "nbands": "occ",            // 参与优化的能带数, "occ" 或整数
-            "checkpoint": null,          // 冻结的内部轨道索引
-            "greedygrow": false         // 是否启用贪心增长算法
+            "nzeta": [1, 1, 0],         // number of zeta functions per angular momentum [s, p, d, ...]
+            "geoms": [0],               // indices of the referenced geometries
+            "nbands": "occ",            // number of bands involved in the optimization, "occ" or an integer
+            "checkpoint": null,          // index of the frozen inner orbital
+            "greedygrow": false         // whether to enable the greedy growth algorithm
         }
     ]
 }

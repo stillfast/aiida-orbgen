@@ -22,21 +22,21 @@ __all__ = [
 
 @calcfunction
 def create_energies_dict(d: "Dict|dict|List") -> Dict:
-    """创建一个 energies 结果的 Dict 对象（用于 WorkChain 输出）。
+    """Build the ``energies`` Dict a WorkChain returns.
     
     Parameters
     ----------
     d : Dict, dict, or List
-        包含 energies 结果的字典、AiiDA Dict 或 AiiDA List（包含能量数据）
+        a plain dict, an AiiDA Dict, or an AiiDA List holding energy data
         
     Returns
     -------
     Dict
-        AiiDA Dict 对象
+        the AiiDA Dict node
     """
-    # 如果是 List，说明是从子节点收集的原始数据，需要先计算
+    # a List means raw data collected from children: compute the deltas first
     if hasattr(d, "__iter__") and not hasattr(d, "get_dict"):
-        # d 是一个 AiiDA List，计算能量差
+        # d is an AiiDA List: compute the energy differences
         energies_by_basis = {}
         for item in d:
             item_dict = item.get_dict() if hasattr(item, "get_dict") else dict(item)
@@ -76,10 +76,10 @@ def create_energies_dict(d: "Dict|dict|List") -> Dict:
             "delta_E_max_meV": float(delta_max * 1000.0),
         }
     elif hasattr(d, "get_dict"):
-        # 如果是 AiiDA Dict，直接获取字典
+        # an AiiDA Dict: unwrap it
         d_dict = d.get_dict()
     else:
-        # 如果是普通字典，直接使用
+        # a plain dict: use as-is
         d_dict = dict(d)
     
     return Dict(dict=d_dict)
@@ -91,29 +91,29 @@ def create_final_results(
     r_cut_val,
     results_list,
 ) -> Dict:
-    """创建最终结果的 Dict 对象（用于 WorkChain 输出）。
+    """Build the ``results`` Dict a WorkChain returns.
 
     Parameters
     ----------
     l_max_val : int or float
-        最大角动量
+        highest angular momentum
     r_cut_val : int or float
-        截断半径
+        cutoff radius
     results_list : list
-        子节点信息的列表
+        per-child records (task, basis, pk, exit_status, ok)
 
     Returns
     -------
     Dict
-        AiiDA Dict 对象
+        the AiiDA Dict node
     """
-    # 提取值（如果是 AiiDA Data 类型）
+    # unwrap AiiDA Data values
     if hasattr(l_max_val, "value"):
         l_max_val = l_max_val.value
     if hasattr(r_cut_val, "value"):
         r_cut_val = r_cut_val.value
-    # results_list 应该是 AiiDA List 节点（包含原始 dicts）
-    # AiiDA 引擎会自动将传入的 list 包装为 List 节点
+    # results_list is expected to be an AiiDA List of plain dicts
+    # the AiiDA engine wraps a plain list in a List node automatically
     if hasattr(results_list, "get_list"):
         children = list(results_list.get_list())
     elif isinstance(results_list, (list, tuple)):
@@ -134,12 +134,12 @@ def create_grid_all_results(
     tolerance_meV,
     search_strategy,
 ) -> Dict:
-    """创建 OrbgenGridSearchWorkChain 的 all_results Dict.
+    """Build the grid search's ``all_results`` Dict.
 
     Parameters
     ----------
     grid_results_list : list
-        每项是 {l_max, r_cut, calc_pk, exit_status, is_finished_ok, ...} 字典
+        each entry is a {l_max, r_cut, calc_pk, exit_status, ...} dict
     tolerance_meV : float
     search_strategy : str
 
@@ -175,7 +175,7 @@ def create_grid_summary(
     best_delta_per_atom_meV=None,
     best_calc_pk=None,
 ) -> Dict:
-    """创建 OrbgenGridSearchWorkChain 的 grid_summary Dict."""
+    """Build the grid search's ``grid_summary`` Dict."""
     def get_val(x, conv=None):
         if x is None:
             return None

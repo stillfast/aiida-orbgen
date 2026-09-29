@@ -1,19 +1,19 @@
 """
-aiida_orbgen.static.json_inputs - 从 JSON 文件加载 abacus/orbgen 配置
+aiida_orbgen.static.json_inputs - load abacus/orbgen configuration from JSON files
 
-提供两个核心函数:
+Provides two core functions:
 
-- :func:`load_orbgen_config`  : 加载 ``pbe_orbgen.json`` 风格的 SIAB 配置
-- :func:`load_abacus_config`  : 加载 ``abacus.json`` 风格的 ABACUS 配置
-- :func:`parse_lmax_rcut_candidates` : 从 orbgen.json 提取 (l_max, r_cut) 候选列表
+- :func:`load_orbgen_config`  : load a ``pbe_orbgen.json``-style SIAB configuration
+- :func:`load_abacus_config`  : load an ``abacus.json``-style ABACUS configuration
+- :func:`parse_lmax_rcut_candidates` : extract the (l_max, r_cut) candidate list from orbgen.json
 
 JSON schema
 -----------
 
-**abacus.json** (新文件, 调整 ABACUS INPUT + 决定 basis + tolerance):
+**abacus.json** (new file, adjusts the ABACUS INPUT + decides basis + tolerance):
 
-abacus.json 现在用 ``abacus`` 键包裹所有 aiida-abacus 相关参数 (与 aiida-abacus
-``test_abacus_base.py`` 一致), 结构如下:
+abacus.json now wraps all aiida-abacus related parameters under the ``abacus``
+key (consistent with aiida-abacus ``test_abacus_base.py``), structured as follows:
 
 .. code-block:: json
 
@@ -49,7 +49,7 @@ abacus.json 现在用 ``abacus`` 键包裹所有 aiida-abacus 相关参数 (与 
       "max_r_cut": 12.0
     }
 
-**orbgen.json** (现有 pbe_orbgen.json, 单组合 l_max/r_cut):
+**orbgen.json** (the existing pbe_orbgen.json, single l_max/r_cut combination):
 
 .. code-block:: json
 
@@ -84,12 +84,12 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# JSON 加载
+# JSON loading
 # ---------------------------------------------------------------------------
 
 
 def load_json(path: Union[str, Path]) -> Dict[str, Any]:
-    """从 .json / .yaml 文件加载 dict。"""
+    """Load a dict from a .json / .yaml file."""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"Config not found: {path}")
@@ -104,17 +104,17 @@ def load_json(path: Union[str, Path]) -> Dict[str, Any]:
 
 
 def load_orbgen_config(path: Union[str, Path]) -> Dict[str, Any]:
-    """加载 ``pbe_orbgen.json`` 风格的 SIAB 配置。
+    """Load a ``pbe_orbgen.json``-style SIAB configuration.
 
     Returns
     -------
     dict
-        原始 JSON 字典 (包含 element / pseudo_dir / geoms / ...)
+        The raw JSON dictionary (containing element / pseudo_dir / geoms / ...)
 
     Raises
     ------
     ValueError
-        必填字段缺失
+        A required field is missing
     """
     cfg = load_json(path)
     required = ["element"]
@@ -127,12 +127,12 @@ def load_orbgen_config(path: Union[str, Path]) -> Dict[str, Any]:
 
 
 def load_abacus_config(path: Union[str, Path]) -> Dict[str, Any]:
-    """加载 ``abacus.json`` 风格的 ABACUS 配置。
+    """Load an ``abacus.json``-style ABACUS configuration.
 
     Returns
     -------
     dict
-        包含::
+        Contains::
 
             {
               "basis": ["pw", "lcao_nsw"],
@@ -144,7 +144,7 @@ def load_abacus_config(path: Union[str, Path]) -> Dict[str, Any]:
     Raises
     ------
     ValueError
-        basis 字段为空或缺
+        The basis field is empty or missing
     """
     cfg = load_json(path)
     basis = cfg.get("basis", ["pw", "lcao_nsw"])
@@ -163,31 +163,32 @@ def load_abacus_config(path: Union[str, Path]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 候选参数解析
+# Candidate parameter parsing
 # ---------------------------------------------------------------------------
 
 
 def parse_lmax_rcut_candidates(
     orbgen_cfg: Dict[str, Any],
 ) -> List[Tuple[int, float]]:
-    """从 orbgen.json 提取 ``(l_max, r_cut)`` 候选列表。
+    """Extract the ``(l_max, r_cut)`` candidate list from orbgen.json.
 
-    当前用法: 单组合, 直接从 ``bessel_nao_rcut`` + ``geoms[0].lmaxmax`` 提取::
+    Current usage: a single combination taken directly from ``bessel_nao_rcut``
+    + ``geoms[0].lmaxmax``::
 
         "bessel_nao_rcut": [9],
         "geoms[0].lmaxmax": 4
         → [(4, 9.0)]
 
-    历史规则 (保留, 暂不启用):
-        1) 显式 ``basis_candidates`` 列表
-        2) 笛卡尔积 ``lmax_candidates × rcut_candidates``
-        3) ``bessel_nao_rcut`` + ``lmaxmax`` (当前)
+    Historical rules (kept, not enabled for now):
+        1) an explicit ``basis_candidates`` list
+        2) the Cartesian product ``lmax_candidates × rcut_candidates``
+        3) ``bessel_nao_rcut`` + ``lmaxmax`` (current)
 
     Returns
     -------
     list of (l_max, r_cut) tuples
     """
-    # 1) 显式 list (保留以备扩展)
+    # 1) explicit list (kept for future extension)
     explicit = orbgen_cfg.get("basis_candidates")
     if explicit:
         out: List[Tuple[int, float]] = []
@@ -197,7 +198,7 @@ def parse_lmax_rcut_candidates(
             out.append((lmax, rcut))
         return out
 
-    # 2) 笛卡尔积 (保留以备扩展)
+    # 2) Cartesian product (kept for future extension)
     lmax_list = orbgen_cfg.get("lmax_candidates")
     rcut_list = orbgen_cfg.get("rcut_candidates")
     if lmax_list and rcut_list:
@@ -207,7 +208,7 @@ def parse_lmax_rcut_candidates(
             for rc in rcut_list
         ]
 
-    # 3) 默认: 用 bessel_nao_rcut + lmaxmax (单组合)
+    # 3) default: use bessel_nao_rcut + lmaxmax (single combination)
     rcut_raw = orbgen_cfg.get("bessel_nao_rcut", [9])
     if isinstance(rcut_raw, (int, float)):
         rcut_list = [float(rcut_raw)]
@@ -223,14 +224,14 @@ def parse_lmax_rcut_candidates(
 
 
 # ---------------------------------------------------------------------------
-# 合并工具
+# Merge helpers
 # ---------------------------------------------------------------------------
 
 
 def merge_input_overrides(
     *sources: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """合并多个 INPUT override 字典, 后面的覆盖前面的。"""
+    """Merge several INPUT override dictionaries, later ones win."""
     out: Dict[str, Any] = {}
     for src in sources:
         if not src:
@@ -242,12 +243,12 @@ def merge_input_overrides(
 def merge_scheduler(
     *sources: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """合并多个 scheduler 字典, 后面的覆盖前面的。"""
+    """Merge several scheduler dictionaries, later ones win."""
     return merge_input_overrides(*sources)
 
 
 # ---------------------------------------------------------------------------
-# 默认 abacus.json 模板 (可作为 build_inputs 的回退)
+# Default abacus.json template (usable as a fallback for build_inputs)
 # ---------------------------------------------------------------------------
 
 
@@ -277,10 +278,10 @@ DEFAULT_ABACUS_CONFIG: Dict[str, Any] = {
 def with_default_abacus(
     abacus_cfg: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """把 ``abacus_cfg`` 合并到 ``DEFAULT_ABACUS_CONFIG`` 上 (覆盖默认)。
+    """Merge ``abacus_cfg`` on top of ``DEFAULT_ABACUS_CONFIG`` (user wins).
 
-    abacus.json 现在用 ``abacus`` 键包裹所有 aiida-abacus 参数 (与 aiida-abacus
-    ``test_abacus_base.py`` 一致):
+    abacus.json now wraps all aiida-abacus parameters under the ``abacus`` key
+    (consistent with aiida-abacus ``test_abacus_base.py``):
 
     .. code-block:: json
 
@@ -297,15 +298,15 @@ def with_default_abacus(
     if not abacus_cfg:
         return dict(DEFAULT_ABACUS_CONFIG)
 
-    # 获取默认和用户的 abacus 配置
+    # Fetch the default and the user-provided abacus configuration
     default_abacus = DEFAULT_ABACUS_CONFIG.get("abacus", {})
     user_abacus = abacus_cfg.get("abacus", {})
 
-    # 合并 parameters.input (后者覆盖前者)
+    # Merge parameters.input (later wins)
     default_input = default_abacus.get("parameters", {}).get("input", {})
     user_input = user_abacus.get("parameters", {}).get("input", {})
 
-    # 合并 metadata.options
+    # Merge metadata.options
     default_options = default_abacus.get("metadata", {}).get("options", {})
     user_options = user_abacus.get("metadata", {}).get("options", {})
 
@@ -324,13 +325,13 @@ def with_default_abacus(
             "tolerance_meV", DEFAULT_ABACUS_CONFIG["tolerance_meV"]
         ),
     }
-    # 透传 metadata 的 label 和 description
+    # Pass through metadata label and description
     if "label" in user_abacus.get("metadata", {}):
         out["abacus"]["metadata"]["label"] = user_abacus["metadata"]["label"]
     if "description" in user_abacus.get("metadata", {}):
         out["abacus"]["metadata"]["description"] = user_abacus["metadata"]["description"]
     
-    # 透传 max_l_max / max_r_cut (OrbgenGridSearchWorkChain 用)
+    # Pass through max_l_max / max_r_cut (used by OrbgenGridSearchWorkChain)
     for key in ("max_l_max", "max_r_cut"):
         if key in abacus_cfg:
             out[key] = abacus_cfg[key]

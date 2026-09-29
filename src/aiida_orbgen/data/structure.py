@@ -1,9 +1,9 @@
 """
-StructureData: 将 ABACUS STRU 文件转换为 ase.Atoms 对象
+StructureData: convert an ABACUS STRU file into an ase.Atoms object
 
-本模块负责将 SIAB 风格的 STRU 文件转换为 ase.Atoms 变量。
+This module converts a SIAB-style STRU file into an ase.Atoms instance.
 
-ABACUS STRU 文件格式:
+ABACUS STRU file format:
     ATOMIC_SPECIES
     <elem> <mass> <pseudo_path>
 
@@ -25,8 +25,8 @@ ABACUS STRU 文件格式:
     <natoms>
     <x> <y> <z> <m1 m2 m3>  // for each atom
 
-数据流:
-    STRU 文件 → parse_stru() → ase.Atoms (含 cell, positions, symbols, etc.)
+Data flow:
+    STRU file → parse_stru() → ase.Atoms (with cell, positions, symbols, etc.)
 """
 
 import os
@@ -36,7 +36,7 @@ from typing import Optional, List, Dict, Tuple, Union
 
 import numpy as np
 
-# 尝试导入 ase
+# Try to import ase
 try:
     from ase import Atoms
     from ase.io import read as ase_read
@@ -54,7 +54,7 @@ __all__ = [
 
 
 def check_ase():
-    """检查 ase 是否可用."""
+    """Check whether ase is available."""
     if not ASE_AVAILABLE:
         raise ImportError(
             "ase is not available. "
@@ -64,17 +64,17 @@ def check_ase():
 
 def parse_stru_to_ase(stru_path: str) -> "Atoms":
     """
-    解析 STRU 文件并返回 ase.Atoms 对象。
+    Parse a STRU file and return an ase.Atoms object.
 
     Parameters
     ----------
     stru_path : str
-        STRU 文件路径
+        Path to the STRU file
 
     Returns
     -------
     ase.Atoms
-        包含 atoms, cell, positions 等信息
+        Containing atoms, cell, positions and related information
 
     Examples
     --------
@@ -93,36 +93,36 @@ def parse_stru_to_ase(stru_path: str) -> "Atoms":
     with open(stru_path, "r") as f:
         content = f.read()
 
-    # 分段解析
+    # Parse section by section
     sections = _split_sections(content)
 
-    # 1. 解析 ATOMIC_SPECIES
+    # 1. Parse ATOMIC_SPECIES
     species_info = _parse_atomic_species(sections.get("ATOMIC_SPECIES", ""))
     element = species_info["element"]
     mass = species_info["mass"]
 
-    # 2. 解析 NUMERICAL_ORBITAL (可选)
+    # 2. Parse NUMERICAL_ORBITAL (optional)
     orb_path = None
     if "NUMERICAL_ORBITAL" in sections:
         orb_path = _parse_numerical_orbital(sections["NUMERICAL_ORBITAL"])
 
-    # 3. 解析 LATTICE_CONSTANT (Bohr)
+    # 3. Parse LATTICE_CONSTANT (Bohr)
     latconst = _parse_lattice_constant(sections.get("LATTICE_CONSTANT", ""))
 
-    # 4. 解析 LATTICE_VECTORS
+    # 4. Parse LATTICE_VECTORS
     lattice_vectors = _parse_lattice_vectors(sections.get("LATTICE_VECTORS", ""))
 
-    # 5. 解析 ATOMIC_POSITIONS
+    # 5. Parse ATOMIC_POSITIONS
     positions, magnetization = _parse_atomic_positions(
         sections.get("ATOMIC_POSITIONS", ""),
         latconst,
         lattice_vectors,
     )
 
-    # 构造 cell (单位: Angstrom, 与 ase 兼容)
+    # Build the cell (in Angstrom, for ase compatibility)
     cell_angstrom = np.array(lattice_vectors) * latconst
 
-    # 构造 ase.Atoms
+    # Build the ase.Atoms
     atoms = Atoms(
         symbols=[element] * len(positions),
         positions=positions,
@@ -131,13 +131,13 @@ def parse_stru_to_ase(stru_path: str) -> "Atoms":
     )
     atoms.set_masses([mass] * len(positions))
 
-    # 设置磁性 (如果有)
+    # Set the magnetization (if any)
     if magnetization is not None and len(positions) > 0:
-        # ase 中每个原子可以设置 magnetic moment
+        # In ase each atom can carry a magnetic moment
         magmoms = [float(magnetization)] * len(positions)
         atoms.set_initial_magnetic_moments(magmoms)
 
-    # 存储额外信息
+    # Store extra information
     atoms.info["element"] = element
     atoms.info["lattice_constant_bohr"] = latconst
     if orb_path is not None:
@@ -149,16 +149,16 @@ def parse_stru_to_ase(stru_path: str) -> "Atoms":
 
 
 def stru_to_ase(stru_path: str) -> "Atoms":
-    """`parse_stru_to_ase` 的别名."""
+    """Alias for ``parse_stru_to_ase``."""
     return parse_stru_to_ase(stru_path)
 
 
 class StructureData:
     """
-    AiiDA 结构数据节点包装器。
+    AiiDA structure data node wrapper.
 
-    内部表示为 ase.Atoms 对象。
-    支持 STRU 文件与 ase.Atoms 之间的转换。
+    Internally represented as an ase.Atoms object.
+    Supports conversion between a STRU file and ase.Atoms.
 
     Examples
     --------
@@ -169,14 +169,14 @@ class StructureData:
 
     def __init__(self, stru_path: Optional[str] = None, atoms: Optional["Atoms"] = None):
         """
-        初始化 StructureData。
+        Initialise StructureData.
 
         Parameters
         ----------
         stru_path : str, optional
-            STRU 文件路径
+            Path to the STRU file
         atoms : ase.Atoms, optional
-            ase.Atoms 对象
+            An ase.Atoms object
         """
         check_ase()
 
@@ -191,55 +191,55 @@ class StructureData:
 
     @classmethod
     def from_stru(cls, stru_path: str) -> "StructureData":
-        """从 STRU 文件创建."""
+        """Create from a STRU file."""
         return cls(stru_path=stru_path)
 
     @classmethod
     def from_ase(cls, atoms: "Atoms") -> "StructureData":
-        """从 ase.Atoms 创建."""
+        """Create from an ase.Atoms."""
         return cls(atoms=atoms)
 
     def to_ase(self) -> "Atoms":
-        """返回 ase.Atoms 对象."""
+        """Return the ase.Atoms object."""
         return self.atoms
 
     def to_stru(self, output_path: str) -> str:
         """
-        将 ase.Atoms 转换回 STRU 格式。
+        Convert ase.Atoms back to the STRU format.
 
         Parameters
         ----------
         output_path : str
-            STRU 输出路径
+            Output path for the STRU file
 
         Returns
         -------
         str
-            输出文件的绝对路径
+            Absolute path of the output file
         """
-        # 提取信息
+        # Extract information
         element = self.atoms.get_chemical_symbols()[0]
         mass = self.atoms.get_masses()[0]
 
-        # 晶格 (假设是 cubic)
+        # Lattice (assumed cubic)
         cell = self.atoms.get_cell()
-        # 使用平均对角元素作为 lattice_constant
+        # Use the average diagonal element as lattice_constant
         avg_latconst = np.mean(np.diag(cell))  # Angstrom
         latconst_bohr = avg_latconst / 1.8897259886  # Bohr
 
-        # 晶格向量
-        lattice_vectors = cell.array / avg_latconst  # 归一化
+        # Lattice vectors
+        lattice_vectors = cell.array / avg_latconst  # normalised
 
-        # 位置
+        # Positions
         positions = self.atoms.get_positions()  # Angstrom
-        # 转换为 fractional (相对于归一化的 cell)
+        # Convert to fractional (relative to the normalised cell)
         fractional = self.atoms.get_scaled_positions()
 
-        # 磁性
+        # Magnetization
         magmom = self.atoms.get_initial_magnetic_moments()
         magnetization = magmom[0] if len(magmom) > 0 else 0.0
 
-        # 生成 STRU
+        # Generate the STRU
         lines = []
         lines.append("ATOMIC_SPECIES")
         lines.append(f"{element} {mass:.6f} ./pseudo.upf")
@@ -259,7 +259,7 @@ class StructureData:
         lines.append(f"{magnetization:.2f}     //starting magnetism")
         lines.append(f"{len(positions)}       //number of atoms")
         for pos in positions:
-            # 减掉 center shift
+            # Subtract the center shift
             lines.append(
                 f"{pos[0]:.8f} {pos[1]:.8f} {pos[2]:.8f} 0 0 0"
             )
@@ -290,12 +290,12 @@ class StructureData:
 
 
 # ============================================================================
-# 内部辅助函数
+# Internal helper functions
 # ============================================================================
 
 def _split_sections(content: str) -> Dict[str, str]:
     """
-    按段分割 STRU 文件内容。
+    Split the content of a STRU file into sections.
 
     Returns
     -------
@@ -315,13 +315,13 @@ def _split_sections(content: str) -> Dict[str, str]:
 
     for line in lines:
         line_stripped = line.strip()
-        # 跳过注释
+        # Skip comments
         if "//" in line:
             line_stripped = line_stripped.split("//")[0].strip()
         if not line_stripped:
             continue
 
-        # 检查是否进入新段
+        # Check whether a new section starts here
         matched_section = None
         for name in section_names:
             if line_stripped == name:
@@ -329,7 +329,7 @@ def _split_sections(content: str) -> Dict[str, str]:
                 break
 
         if matched_section:
-            # 保存上一段
+            # Store the previous section
             if current_section is not None:
                 sections[current_section] = "\n".join(current_lines)
             current_section = matched_section
@@ -338,7 +338,7 @@ def _split_sections(content: str) -> Dict[str, str]:
             if current_section is not None:
                 current_lines.append(line)
 
-    # 保存最后一段
+    # Store the last section
     if current_section is not None:
         sections[current_section] = "\n".join(current_lines)
 
@@ -347,9 +347,9 @@ def _split_sections(content: str) -> Dict[str, str]:
 
 def _parse_atomic_species(content: str) -> dict:
     """
-    解析 ATOMIC_SPECIES 段。
+    Parse the ATOMIC_SPECIES section.
 
-    格式: <elem> <mass> <pseudo_path>
+    Format: <elem> <mass> <pseudo_path>
     """
     lines = [l.strip() for l in content.splitlines() if l.strip()]
     if not lines:
@@ -365,9 +365,9 @@ def _parse_atomic_species(content: str) -> dict:
 
 def _parse_numerical_orbital(content: str) -> str:
     """
-    解析 NUMERICAL_ORBITAL 段。
+    Parse the NUMERICAL_ORBITAL section.
 
-    格式: <orb_path>
+    Format: <orb_path>
     """
     lines = [l.strip() for l in content.splitlines() if l.strip()]
     if not lines:
@@ -377,23 +377,23 @@ def _parse_numerical_orbital(content: str) -> str:
 
 def _parse_lattice_constant(content: str) -> float:
     """
-    解析 LATTICE_CONSTANT 段 (返回 Bohr).
+    Parse the LATTICE_CONSTANT section (returned in Bohr).
 
-    格式: <latconst>  // add lattice constant(a.u.)
+    Format: <latconst>  // add lattice constant(a.u.)
     """
     lines = [l.strip() for l in content.splitlines() if l.strip()]
     if not lines:
         raise ValueError("LATTICE_CONSTANT section is empty")
-    # 去除 // 注释
+    # Strip the // comment
     first_line = lines[0].split("//")[0].strip()
     return float(first_line)
 
 
 def _parse_lattice_vectors(content: str) -> List[List[float]]:
     """
-    解析 LATTICE_VECTORS 段。
+    Parse the LATTICE_VECTORS section.
 
-    格式: 三行, 每行三个数
+    Format: three lines, three numbers each
     """
     lines = [l.strip() for l in content.splitlines() if l.strip()]
     if len(lines) < 3:
@@ -411,19 +411,19 @@ def _parse_atomic_positions(
     lattice_vectors: List[List[float]],
 ) -> Tuple[np.ndarray, Optional[float]]:
     """
-    解析 ATOMIC_POSITIONS 段。
+    Parse the ATOMIC_POSITIONS section.
 
-    格式:
+    Format:
         <coord_type>  // Cartesian_angstrom_center_xyz, Direct, etc.
         <elem_label>
         <magnetization>
         <natoms>
         <x> <y> <z> <m1 m2 m3>  // for each atom
     """
-    # 去除 // 注释
+    # Strip the // comments
     lines = []
     for line in content.splitlines():
-        # 去除 // 后的注释
+        # Strip everything after //
         if "//" in line:
             line = line.split("//")[0]
         line = line.strip()
@@ -451,7 +451,7 @@ def _parse_atomic_positions(
         x, y, z = float(tokens[0]), float(tokens[1]), float(tokens[2])
 
         if "Cartesian" in coord_type:
-            # 已经是 Angstrom, 但需要去掉 center shift
+            # Already in Angstrom, but the center shift still has to be removed
             # shift = latconst / 2 / 1.8897259886 (Angstrom)
             shift_angstrom = shift / 1.8897259886
             x -= shift_angstrom
@@ -459,14 +459,14 @@ def _parse_atomic_positions(
             z -= shift_angstrom
             positions.append([x, y, z])
         elif "Direct" in coord_type:
-            # Direct 坐标: 分数坐标, 转换为 Cartesian
-            # 分数坐标 * cell = 笛卡尔坐标
+            # Direct coordinates: fractional, converted to Cartesian
+            # fractional coordinates * cell = Cartesian coordinates
             frac = np.array([x, y, z])
             cell = np.array(lattice_vectors) * latconst
             cart = frac @ cell
             positions.append(cart.tolist())
         else:
-            # 默认为 Cartesian (Angstrom)
+            # Default to Cartesian (Angstrom)
             positions.append([x, y, z])
 
     return np.array(positions), magnetization

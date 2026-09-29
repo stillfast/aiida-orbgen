@@ -1,19 +1,21 @@
 """
-STRU 接口
+STRU interface
 
-生成 ABACUS STRU 文件 (结构文件)。
+Generate ABACUS STRU (structure) files.
 
-对应文件: {folder}/STRU
-例: U-dimer-1.89-9au/STRU
+Corresponding file: {folder}/STRU
+Example: U-dimer-1.89-9au/STRU
 
-本模块是对 SIAB 的高层封装，底层调用:
-- ``SIAB.abacus.io.structure_to_text`` : 按 proto 调度生成 STRU 文本
-- ``SIAB.io.convention.dft_folder``    : 标准 DFT 文件夹命名
+This module is a high-level wrapper around SIAB and calls, underneath:
+- ``SIAB.abacus.io.structure_to_text`` : dispatch on proto to build the STRU text
+- ``SIAB.io.convention.dft_folder``    : canonical DFT folder naming
 
-这样做的好处:
-1. 所有支持的几何原型 (monomer/dimer/trimer/...) 由 SIAB 维护。
-2. 文件夹命名 / 数值精度与 SIAB 主线完全一致。
-3. 接口层只负责 "JSON 参数 → SIAB 调用参数" 的映射。
+Why this is done:
+1. All supported geometry prototypes (monomer/dimer/trimer/...) are
+   maintained by SIAB.
+2. Folder naming and numerical precision match the SIAB mainline exactly.
+3. The interface layer only owns the mapping "JSON parameters → SIAB call
+   arguments".
 """
 
 import os
@@ -31,7 +33,7 @@ __all__ = [
 ]
 
 
-# SIAB 支持的几何原型
+# Geometry prototypes supported by SIAB
 SUPPORTED_PROTOS = {
     "monomer",
     "dimer",
@@ -55,25 +57,26 @@ def dft_folder_name(
     rcut: Optional[float] = None,
 ) -> str:
     """
-    生成 SIAB 标准 DFT 文件夹名。
+    Generate the canonical SIAB DFT folder name.
 
-    直接调用 ``SIAB.io.convention.dft_folder``，保证与 SIAB 完全一致。
+    Calls ``SIAB.io.convention.dft_folder`` directly, so it is guaranteed to
+    match SIAB exactly.
 
     Parameters
     ----------
     elem : str
-        元素符号
+        Element symbol
     proto : str
-        几何原型
+        Geometry prototype
     pert : float
-        扰动幅度 (键长, Angstrom)
+        Perturbation magnitude (bond length, Angstrom)
     rcut : float, optional
-        截断半径 (au)，如果有则加入文件夹名
+        Cutoff radius (au); added to the folder name when given
 
     Returns
     -------
     str
-        文件夹名
+        Folder name
 
     Examples
     --------
@@ -92,24 +95,24 @@ def generate_atom_coords(
     lattice_constant: float,
 ) -> List[List[float]]:
     """
-    根据几何原型生成原子坐标 (Angstrom)。
+    Generate the atomic coordinates (Angstrom) of a geometry prototype.
 
-    这一步只是 "数值计算"，不写文件；底层复用 SIAB 的结构生成逻辑，
-    因此计算结果与 SIAB 完全一致。
+    This step is pure "numerical computation" and writes no files; it reuses
+    SIAB's structure-generation logic, so the result matches SIAB exactly.
 
     Parameters
     ----------
     proto : str
-        几何原型
+        Geometry prototype
     bond_length : float
-        键长 (Angstrom)
+        Bond length (Angstrom)
     lattice_constant : float
-        晶格常数 (Bohr)
+        Lattice constant (Bohr)
 
     Returns
     -------
     list[list[float]]
-        原子坐标列表 [[x, y, z], ...]
+        List of atomic coordinates [[x, y, z], ...]
     """
     proto = proto.lower()
     if proto not in SUPPORTED_PROTOS:
@@ -195,7 +198,7 @@ def generate_atom_coords(
             [0.0 + shift, 0.0 + shift, -d3 + shift],
         ]
 
-    # 不会到达这里
+    # Not reachable
     raise ValueError(f"Unsupported proto: {proto}")
 
 
@@ -206,7 +209,7 @@ def _resolve_stru_params(
     lattice_constant: Optional[float],
     bond_length: Optional[float],
 ) -> Dict[str, Any]:
-    """从 JSON 中推断 STRU 生成参数。"""
+    """Infer the STRU generation parameters from the JSON."""
     elem = json_config["element"]
     pseudo_dir = json_config.get("pseudo_dir", "./pseudo.upf")
     mass = json_config.get("mass", 1.0)
@@ -254,35 +257,36 @@ def generate_stru(
     orb_filename: Optional[str] = None,
 ) -> str:
     """
-    生成 ABACUS STRU 文件。
+    Generate an ABACUS STRU file.
 
-    底层调用 ``SIAB.abacus.io.structure_to_text``，因此输出格式
-    (数值精度、注释、字段顺序) 与 SIAB 主线完全一致。
+    Calls ``SIAB.abacus.io.structure_to_text`` underneath, so the output format
+    (numerical precision, comments, field order) matches the SIAB mainline
+    exactly.
 
     Parameters
     ----------
     json_config : dict
-        SIAB JSON 配置，应包含:
+        SIAB JSON config, which should contain:
         - element, pseudo_dir, geoms[0]
     output_path : str
-        输出文件路径
+        Output file path
     proto : str, optional
-        几何原型 (覆盖 JSON 中的设置)
+        Geometry prototype (overrides the JSON setting)
     bond_length : float, optional
-        键长 (Angstrom, 覆盖 JSON 中的设置)
+        Bond length (Angstrom, overrides the JSON setting)
     nspin : int, optional
-        自旋极化 (1 或 2)
+        Spin polarisation (1 or 2)
     lattice_constant : float, optional
-        晶格常数 (Bohr, 覆盖 JSON 中的设置)
+        Lattice constant (Bohr, overrides the JSON setting)
     pseudo_filename : str, optional
-        赝势文件名 (覆盖 JSON 中的设置)
+        Pseudo-potential file name (overrides the JSON setting)
     orb_filename : str, optional
-        NUMERICAL_ORBITAL 段引用的轨道文件名
+        Orbital file name referenced by the NUMERICAL_ORBITAL section
 
     Returns
     -------
     str
-        生成的 STRU 文件的绝对路径
+        Absolute path of the generated STRU file
 
     Examples
     --------
@@ -327,26 +331,26 @@ def generate_stru(
 
 def parse_stru(filepath: str) -> Dict[str, Any]:
     """
-    从 STRU 文件中解析关键字段。
+    Parse the key fields out of a STRU file.
 
-    解析的字段:
-    - element: 元素符号
-    - pseudo_file: 赝势文件名
-    - lattice_constant: 晶格常数 (Bohr)
-    - lattice_vectors: 3x3 晶格矢量
-    - nspin: 1 或 2
-    - proto: 由 number of atoms 推断 (1=monomer, 2=dimer, ...)
+    Parsed fields:
+    - element: element symbol
+    - pseudo_file: pseudo-potential file name
+    - lattice_constant: lattice constant (Bohr)
+    - lattice_vectors: 3x3 lattice vectors
+    - nspin: 1 or 2
+    - proto: inferred from the number of atoms (1=monomer, 2=dimer, ...)
     - coordinates: [[x, y, z, ...], ...]
 
     Parameters
     ----------
     filepath : str
-        STRU 文件路径
+        Path of the STRU file
 
     Returns
     -------
     dict
-        解析结果
+        Parsing result
     """
     result: Dict[str, Any] = {
         "element": None,
@@ -409,19 +413,20 @@ def parse_stru(filepath: str) -> Dict[str, Any]:
                         [float(tok[0]), float(tok[1]), float(tok[2])]
                     )
             elif section == "ATOMIC_POSITIONS_HEADER":
-                # 例如 "Cartesian_angstrom_center_xyz  //Cartesian or Direct coordinate."
+                # e.g. "Cartesian_angstrom_center_xyz  //Cartesian or Direct coordinate."
                 section = "ATOMIC_POSITIONS"
             elif section == "ATOMIC_POSITIONS":
-                # 3 行: 元素标签, magnetization, 原子数, 然后是 natom 行坐标
+                # Three lines: element label, magnetization, number of atoms, then
+                # natom coordinate lines
                 if "//Element Label" in line or "//element" in line.lower():
                     continue
                 if "//number of atoms" in line.lower() or "number of atoms" in line:
-                    # 取该行的第一个数字
+                    # Take the first number on that line
                     for tok in line.split():
                         try:
                             expected_coords = int(tok)
                             natoms = expected_coords
-                            # 用原子数推断 proto
+                            # Infer proto from the atom count
                             proto_map = {1: "monomer", 2: "dimer", 3: "trimer", 4: None}
                             result["proto"] = proto_map.get(expected_coords)
                             break
@@ -434,7 +439,7 @@ def parse_stru(filepath: str) -> Dict[str, Any]:
                     except ValueError:
                         pass
                     continue
-                # 坐标行: 3 个浮点数 + 3 个整数
+                # Coordinate line: three floats followed by three integers
                 tok = line.split()
                 if len(tok) >= 3:
                     try:
@@ -449,23 +454,27 @@ def parse_stru(filepath: str) -> Dict[str, Any]:
     return result
 
 
-# ASE 支持的坐标类型白名单。SIAB 写的 ``Cartesian_angstrom_center_xyz``
-# 实际上是 ``Cartesian`` (单位 Angstrom) 的非标准变体, ASE 不识别。
-# 这里集中处理转换, 避免污染 ``parse_stru`` 的纯文本解析。
+# Whitelist of the coordinate types ASE supports.  The
+# ``Cartesian_angstrom_center_xyz`` that SIAB writes is really a non-standard
+# variant of ``Cartesian`` (units Angstrom) that ASE does not recognise.  The
+# conversion is centralised here so that it does not pollute the plain-text
+# parsing in ``parse_stru``.
 _ASE_COORD_ALIASES = {
     "cartesian_angstrom_center_xyz": "Cartesian",
     "cartesian_angstrom": "Cartesian",
     "cartesian_nm": "Cartesian",
-    "cartesian_bohr": "Cartesian",  # 但坐标需 Bohr->Ang, 由 ASE 处理
+    "cartesian_bohr": "Cartesian",  # but the coordinates need Bohr->Ang, which ASE handles
 }
 
 
 def _ase_compatible_stru_text(filepath: str) -> str:
     """
-    读取 STRU 文件内容, 把 SIAB 的非标准坐标标记替换为 ASE 可识别的形式。
+    Read a STRU file and replace SIAB's non-standard coordinate labels with the
+    form ASE recognises.
 
-    注意: 这一步只改文本, 不动坐标数值; 坐标在原文件中已经是 Angstrom,
-    与 ASE 的 'Cartesian' 单位一致。
+    Note: this only rewrites the text and never touches the coordinate values;
+    the coordinates in the original file are already Angstrom, i.e. the unit
+    ASE's 'Cartesian' means.
     """
     with open(filepath, "r") as f:
         text = f.read()
@@ -478,26 +487,27 @@ def _ase_compatible_stru_text(filepath: str) -> str:
 
 def read_stru_as_ase(filepath: str):
     """
-    读取 STRU 文件并返回 ``ase.Atoms`` 对象。
+    Read a STRU file and return an ``ase.Atoms`` object.
 
-    直接 ``ase.io.read(stru, format='abacus')`` 会失败, 因为:
-    1. SIAB 写的坐标标记 ``Cartesian_angstrom_center_xyz`` 不在 ASE 白名单
-       (只接受 ``Direct`` / ``Cartesian``)。
-    2. 即使把标签换成 ``Cartesian``, ASE 仍会按 ``pos × lat0`` 解析,
-       与 SIAB 写的"原始 Angstrom"语义不一致。
+    Calling ``ase.io.read(stru, format='abacus')`` directly fails because:
+    1. The coordinate label ``Cartesian_angstrom_center_xyz`` SIAB writes is not
+       on ASE's whitelist (which only accepts ``Direct`` / ``Cartesian``).
+    2. Even after renaming the label to ``Cartesian``, ASE still parses the
+       positions as ``pos × lat0``, which does not match the "raw Angstrom"
+       semantics SIAB writes.
 
-    本函数绕开 ASE STRU reader, 直接用 :func:`parse_stru` 解析后构造
-    ``ase.Atoms``, 避免以上两个坑。
+    This function bypasses the ASE STRU reader and builds the ``ase.Atoms``
+    object directly from :func:`parse_stru`, avoiding both pitfalls.
 
     Parameters
     ----------
     filepath : str
-        STRU 文件路径
+        Path of the STRU file
 
     Returns
     -------
     ase.Atoms
-        包含 cell, positions, numbers, pbc 等信息的 ASE 原子对象
+        ASE atoms object carrying cell, positions, numbers, pbc, ...
 
     Examples
     --------
@@ -512,14 +522,15 @@ def read_stru_as_ase(filepath: str):
 
     parsed = parse_stru(filepath)
     if parsed["lattice_vectors"] is None or not parsed["coordinates"]:
-        raise ValueError(f"无法从 {filepath} 解析出 lattice / coordinates")
+        raise ValueError(f"could not parse lattice / coordinates from {filepath}")
 
     # SIAB: cell (Bohr) = LATTICE_CONSTANT (Bohr) * LATTICE_VECTORS (dimensionless)
     lat0_bohr = float(parsed["lattice_constant"])
     cell_bohr = np.array(parsed["lattice_vectors"], dtype=float) * lat0_bohr
     cell_ang = cell_bohr / BOHR_TO_ANG
 
-    # SIAB: 坐标是原始 Angstrom, 已经是 SI 单位, 不需要再换算
+    # SIAB: the coordinates are raw Angstrom, already in SI units, so no
+    # conversion is needed
     positions_ang = np.array(parsed["coordinates"], dtype=float)
 
     symbols = [parsed["element"]] * len(positions_ang)
@@ -534,31 +545,33 @@ def read_stru_as_ase(filepath: str):
 
 def verify_ase_atoms(stru_path: str, tol: float = 1e-6) -> Dict[str, Any]:
     """
-    验证 STRU → ASE Atoms 转换的正确性。
+    Verify that a STRU → ASE Atoms conversion is correct.
 
-    比较 :func:`parse_stru` (纯文本) 和 :func:`read_stru_as_ase` (走 ASE)
-    解析同一文件得到的结果, 检查:
+    Compare the results of :func:`parse_stru` (plain text) and
+    :func:`read_stru_as_ase` (through ASE) on the same file, checking:
 
-    - n_atoms         原子数一致
-    - formula         元素列表一致
-    - positions       坐标 (Angstrom) 一致, 误差 < ``tol``
-    - cell            晶格矢量 (Angstrom) 一致, 误差 < ``tol``
-    - pbc             三方向周期性设置一致
-    - has_cartesian   坐标确实是 Cartesian (非 Direct)
-    - has_orb         是否带 NUMERICAL_ORBITAL 引用 (ASE 不会读, 只做记录)
+    - n_atoms         the atom counts agree
+    - formula         the element lists agree
+    - positions       the coordinates (Angstrom) agree within ``tol``
+    - cell            the lattice vectors (Angstrom) agree within ``tol``
+    - pbc             the periodicity settings agree in all three directions
+    - has_cartesian   the coordinates really are Cartesian (not Direct)
+    - has_orb         whether a NUMERICAL_ORBITAL reference is present
+                      (ASE does not read it; it is recorded only)
 
     Parameters
     ----------
     stru_path : str
-        STRU 文件路径
+        Path of the STRU file
     tol : float
-        数值比较的绝对误差容限, default 1e-6 (Angstrom)
+        Absolute tolerance for the numerical comparisons, default 1e-6 (Angstrom)
 
     Returns
     -------
     dict
-        形如 ``{"check_name": {"ok": bool, "expected": ..., "got": ...}}`` 的报告。
-        若所有项 ``ok=True``, 转换视为正确。
+        A report of the form
+        ``{"check_name": {"ok": bool, "expected": ..., "got": ...}}``.
+        If every entry has ``ok=True``, the conversion is considered correct.
 
     Examples
     --------
@@ -569,22 +582,22 @@ def verify_ase_atoms(stru_path: str, tol: float = 1e-6) -> Dict[str, Any]:
     parsed = parse_stru(stru_path)
     atoms = read_stru_as_ase(stru_path)
 
-    # 1. 原子数
+    # 1. Atom count
     n_atoms_ok = bool(len(atoms) == len(parsed["coordinates"]))
 
-    # 2. 元素符号
+    # 2. Element symbols
     ase_symbols = list(atoms.get_chemical_symbols())
     parsed_symbols = [parsed["element"]] * len(parsed["coordinates"])
     formula_ok = bool(ase_symbols == parsed_symbols)
 
-    # 3. 坐标
+    # 3. Coordinates
     pos_err = 0.0
     if n_atoms_ok:
         import numpy as np
         pos_err = float(np.max(np.abs(atoms.positions - np.array(parsed["coordinates"]))))
     positions_ok = bool(pos_err < tol)
 
-    # 4. 晶格 (Bohr -> Angstrom)
+    # 4. Lattice (Bohr -> Angstrom)
     # SIAB: cell (Bohr) = LATTICE_CONSTANT (Bohr) * LATTICE_VECTORS (dimensionless)
     import numpy as np
     expected_cell = (
@@ -595,7 +608,7 @@ def verify_ase_atoms(stru_path: str, tol: float = 1e-6) -> Dict[str, Any]:
     cell_err = float(np.max(np.abs(atoms.cell.array - expected_cell)))
     cell_ok = bool(cell_err < tol)
 
-    # 5. 周期性: SIAB STRU 默认三方向 PBC
+    # 5. Periodicity: a SIAB STRU is PBC in all three directions by default
     expected_pbc = [True, True, True]
     pbc_ok = bool(list(atoms.pbc) == expected_pbc)
 
@@ -629,21 +642,21 @@ def verify_ase_atoms(stru_path: str, tol: float = 1e-6) -> Dict[str, Any]:
         "has_orbital_reference": {
             "ok": bool(parsed["orbital_file"] is not None),
             "orbital_file": parsed["orbital_file"],
-            "note": "ASE 不会读取 NUMERICAL_ORBITAL 段, 仅作记录",
+            "note": "ASE does not read NUMERICAL_ORBITAL; recorded only",
         },
     }
 
 
 def params_stru_to_ase(params_stru: Dict[str, Any]):
     """
-    将 ``read_stru`` 返回的结构化 dict 转换为 ``ase.Atoms``。
+    Convert the structured dict returned by ``read_stru`` into ``ase.Atoms``.
 
-    期望的输入格式::
+    Expected input format::
 
         {
             'lat': {
-                'const': 30.0,                        # 晶格常数 (Bohr)
-                'vec':  [[1,0,0],[0,1,0],[0,0,1]]     # 晶格矢量 (无量纲)
+                'const': 30.0,                        # lattice constant (Bohr)
+                'vec':  [[1,0,0],[0,1,0],[0,0,1]]     # lattice vectors (dimensionless)
             },
             'species': [
                 {
@@ -651,42 +664,44 @@ def params_stru_to_ase(params_stru: Dict[str, Any]):
                     'mass':     1.0,
                     'pp_file':  'U.pbe-n-nc.upf',
                     'orb_file': 'U_gga_9au_100Ry_27s27p26d26f25g.orb',
-                    'mag_each': 0.0,                    # 每个原子平均磁矩
+                    'mag_each': 0.0,                    # average magnetic moment per atom
                     'natom':    2,
                     'atom': [
-                        {'coord': [7.94, 7.94, 7.94],   # 单位取决于 coord_type
-                         'm':     [0, 0, 0]},            # 3-vector 磁矩
+                        {'coord': [7.94, 7.94, 7.94],   # the unit depends on coord_type
+                         'm':     [0, 0, 0]},            # magnetic moment as a 3-vector
                         {'coord': [7.94, 7.94, 10.69],  # Angstrom
                          'm':     [0, 0, 0]},
                     ],
                 },
-                # ... 多元素时这里有多个 species
+                # ... with several elements there are several species entries here
             ],
-            'coord_type': 'Cartesian_angstrom_center_xyz'   # 或 'Direct' 等
+            'coord_type': 'Cartesian_angstrom_center_xyz'   # or 'Direct', etc.
         }
 
-    单位约定 (与 SIAB 一致):
+    Unit conventions (same as SIAB):
 
     - ``lat.const``: Bohr
-    - ``lat.vec``:   无量纲, 实际 cell (Bohr) = const × vec
-    - ``atom.coord`` (Cartesian_angstrom_*): Angstrom, 已是 SI 单位
-    - ``atom.coord`` (Direct):              分数坐标 ∈ [0, 1)
-    - ``atom.m``:     磁矩 (3-vector, 通常 collinear 时只有 z 分量非零)
+    - ``lat.vec``:   dimensionless; the actual cell (Bohr) = const × vec
+    - ``atom.coord`` (Cartesian_angstrom_*): Angstrom, already SI units
+    - ``atom.coord`` (Direct):              fractional coordinates ∈ [0, 1)
+    - ``atom.m``:     magnetic moment (3-vector; for a collinear case usually
+      only the z component is non-zero)
 
     Parameters
     ----------
     params_stru : dict
-        符合上述 schema 的字典
+        A dict following the schema above
 
     Returns
     -------
     ase.Atoms
-        多元素、磁矩、晶格、周期性都正确设置
+        With multiple elements, magnetic moments, lattice and periodicity all set
+        correctly
 
     Notes
     -----
-    ``pp_file``/``orb_file`` 是 ABACUS 特有字段, ASE 不识别;
-    若需要保留, 可在调用后用 ``atoms.info`` 写入:
+    ``pp_file``/``orb_file`` are ABACUS-specific fields ASE does not recognise;
+    to keep them, write them into ``atoms.info`` after the call:
 
     >>> atoms = params_stru_to_ase(params_stru)
     >>> atoms.info["pp_file"]  = params_stru["species"][0]["pp_file"]
@@ -703,25 +718,25 @@ def params_stru_to_ase(params_stru: Dict[str, Any]):
     import numpy as np
     from ase import Atoms
 
-    # ---- 1. 解析 cell ----
+    # ---- 1. Parse the cell ----
     lat = params_stru["lat"]
     lat_const_bohr = float(lat["const"])
     lat_vec = np.asarray(lat["vec"], dtype=float)
     if lat_vec.shape != (3, 3):
         raise ValueError(
-            f"lat.vec 必须是 3x3, 实际 {lat_vec.shape}"
+            f"lat.vec must be 3x3, got {lat_vec.shape}"
         )
     cell_bohr = lat_vec * lat_const_bohr
     cell_ang = cell_bohr / BOHR_TO_ANG
 
-    # ---- 2. 解析坐标类型 ----
+    # ---- 2. Parse the coordinate type ----
     coord_type = params_stru.get("coord_type", "")
-    # Direct (fractional) vs Cartesian 区分
+    # Distinguish Direct (fractional) from Cartesian
     is_direct = coord_type.lower().startswith("direct")
-    # SIAB 的 ``Cartesian_angstrom_center_xyz`` / ``Cartesian_angstrom`` /
-    # ``Cartesian`` 在 SIAB 里都是 Angstrom, 在 ASE 里也是 Angstrom。
+    # In SIAB, ``Cartesian_angstrom_center_xyz`` / ``Cartesian_angstrom`` /
+    # ``Cartesian`` are all Angstrom, and so they are in ASE.
 
-    # ---- 3. 收集每个原子 ----
+    # ---- 3. Collect every atom ----
     symbols: List[str] = []
     positions: List[List[float]] = []
     magmoms: List[List[float]] = []
@@ -732,22 +747,23 @@ def params_stru_to_ase(params_stru: Dict[str, Any]):
         mass = float(sp.get("mass", 1.0))
         atoms_of_sp = sp.get("atom", [])
         if len(atoms_of_sp) != sp.get("natom", len(atoms_of_sp)):
-            # 防御: 显式 natom 与 atom 列表长度不一致时报错
+            # Defensive: raise if an explicit natom disagrees with the length of
+            # the atom list
             raise ValueError(
                 f"species '{sym}': natom={sp.get('natom')} "
-                f"与 atom 列表长度 {len(atoms_of_sp)} 不一致"
+                f"does not match the length of the atom list ({len(atoms_of_sp)})"
             )
         for atom in atoms_of_sp:
             symbols.append(sym)
             masses.append(mass)
             coord = np.asarray(atom["coord"], dtype=float)
             if is_direct:
-                # 分数坐标 -> Cartesian Angstrom
+                # Fractional coordinates -> Cartesian Angstrom
                 pos_ang = coord @ cell_ang
             else:
                 pos_ang = coord
             positions.append(pos_ang)
-            # 磁矩: 兼容 3-vector 与 scalar
+            # Magnetic moment: accept both a 3-vector and a scalar
             m = atom.get("m", [0, 0, 0])
             if np.isscalar(m):
                 magmoms.append([0, 0, float(m)])
@@ -767,21 +783,22 @@ def params_stru_to_ase(params_stru: Dict[str, Any]):
 
 def params_stru_to_ase_validate(params_stru: Dict[str, Any]) -> Dict[str, Any]:
     """
-    验证 ``params_stru`` dict 能否被 :func:`params_stru_to_ase` 正确转换,
-    并给出与 ASE ``Atoms`` 一致性的检查报告。
+    Verify that a ``params_stru`` dict can be converted correctly by
+    :func:`params_stru_to_ase`, and report its consistency with the ASE ``Atoms``
+    object it produces.
 
-    报告项 (与 :func:`verify_ase_atoms` 类似):
+    Report entries (analogous to :func:`verify_ase_atoms`):
 
     - n_atoms
     - formula
     - cell_angstrom
     - coord_type
-    - direct_coords        坐标是否为分数 (True/False)
+    - direct_coords        whether the coordinates are fractional (True/False)
 
     Returns
     -------
     dict
-        每个键为 ``{"ok": bool, "expected": ..., "got": ...}``
+        Each key maps to ``{"ok": bool, "expected": ..., "got": ...}``
     """
     atoms = params_stru_to_ase(params_stru)
     import numpy as np

@@ -1,14 +1,14 @@
 """
 generate_pbe_interface.py
 
-使用 aiida-orbgen 的接口, 在 project/pbe_interface/ 目录中生成:
-- primitive_jy/U_gga_9au_100Ry_27s27p26d26f25g.orb  (NSW 原始轨道)
-- U-dimer-1.89-9au/INPUT                          (ABACUS 输入)
-- U-dimer-1.89-9au/STRU                           (ABACUS 结构)
+Use the aiida-orbgen interfaces to generate the following in the project/pbe_interface/ directory:
+- primitive_jy/U_gga_9au_100Ry_27s27p26d26f25g.orb  (NSW raw orbital)
+- U-dimer-1.89-9au/INPUT                          (ABACUS input)
+- U-dimer-1.89-9au/STRU                           (ABACUS structure)
 
-然后可以用 diff 等工具与 project/pbe/ 中的实际文件对比。
+They can then be compared against the actual files in project/pbe/ with tools such as diff.
 
-运行方式:
+How to run:
     cd /home/liguozhou/abacus/calculations/orbgen
     python aiida-orbgen/tests/data/pbe/generate_pbe_interface.py
 """
@@ -18,12 +18,12 @@ import os
 import sys
 from pathlib import Path
 
-# 将 aiida-orbgen/src 添加到 path
+# Add aiida-orbgen/src to path
 ROOT = Path("/home/liguozhou/abacus/calculations/orbgen")
 sys.path.insert(0, str(ROOT / "aiida-orbgen" / "src"))
 sys.path.insert(0, str(ROOT / "aiida-orbgen"))
 
-# 添加 SIAB (ABACUS-CSW-NAO) 库到 path
+# Add the SIAB (ABACUS-CSW-NAO) library to path
 SIAB_PATH = Path("/home/liguozhou/install/ABACUS-CSW-NAO")
 if SIAB_PATH.exists() and str(SIAB_PATH) not in sys.path:
     sys.path.insert(0, str(SIAB_PATH))
@@ -34,73 +34,73 @@ from aiida_orbgen.interfaces.stru import generate_stru
 
 
 def main():
-    """主函数: 生成 NSW, INPUT, STRU 文件到 project/pbe_interface/ 目录."""
+    """Main function: generate the NSW, INPUT and STRU files in the project/pbe_interface/ directory."""
 
-    # 配置路径
+    # Configure the paths
     config_path = ROOT / "aiida-orbgen" / "tests" / "data" / "pbe" / "pbe_orbgen.json"
     output_root = ROOT / "project" / "pbe_interface"
     job_folder = output_root / "U-dimer-1.89-9au"
     primitive_jy_dir = output_root / "primitive_jy"
 
-    # 创建输出目录
+    # Create the output directories
     primitive_jy_dir.mkdir(parents=True, exist_ok=True)
     job_folder.mkdir(parents=True, exist_ok=True)
 
-    # 读取 JSON 配置
+    # Read the JSON configuration
     with open(config_path) as f:
         config = json.load(f)
 
     print("=" * 70)
-    print("aiida-orbgen 接口文件生成测试")
+    print("aiida-orbgen interface file generation test")
     print("=" * 70)
-    print(f"配置文件: {config_path}")
-    print(f"输出目录: {output_root}")
+    print(f"Configuration file: {config_path}")
+    print(f"Output directory: {output_root}")
     print()
 
-    # 1. 生成 NSW 原始轨道
-    print("[1/3] 生成 NSW 原始轨道...")
+    # 1. Generate the raw NSW orbital
+    print("[1/3] Generating the raw NSW orbital...")
     nsw_path = generate_nsw(
         config,
         output_dir=str(primitive_jy_dir),
         lmaxmax=config["geoms"][0]["lmaxmax"],
     )
-    print(f"      NSW 文件: {nsw_path}")
+    print(f"      NSW file: {nsw_path}")
     nsw_filename = os.path.basename(nsw_path)
     print()
 
-    # 2. 生成 INPUT 文件
-    print("[2/3] 生成 INPUT 文件...")
+    # 2. Generate the INPUT file
+    print("[2/3] Generating the INPUT file...")
     input_path = generate_incar(
         config,
         output_path=str(job_folder / "INPUT"),
     )
-    print(f"      INPUT 文件: {input_path}")
+    print(f"      INPUT file: {input_path}")
     print()
 
-    # 3. 生成 STRU 文件
-    print("[3/3] 生成 STRU 文件...")
+    # 3. Generate the STRU file
+    print("[3/3] Generating the STRU file...")
     stru_path = generate_stru(
         config,
         output_path=str(job_folder / "STRU"),
         bond_length=1.89,
         orb_filename=nsw_filename,
     )
-    print(f"      STRU 文件: {stru_path}")
+    print(f"      STRU file: {stru_path}")
     print()
 
-    # 输出对比摘要
+    # Print the comparison summary
     print("=" * 70)
-    print("生成完成, 可对比以下目录:")
+    print("Generation complete; the following directories can be compared:")
     print("=" * 70)
-    print(f"  参考: {ROOT / 'project' / 'pbe'}")
-    print(f"  生成: {output_root}")
+    print(f"  Reference: {ROOT / 'project' / 'pbe'}")
+    print(f"  Generated: {output_root}")
     print()
-    print("对比命令:")
+    print("Comparison commands:")
     print(f"  diff -r {ROOT / 'project' / 'pbe' / 'U-dimer-1.89-9au' / 'INPUT'} {job_folder / 'INPUT'}")
     print(f"  diff -r {ROOT / 'project' / 'pbe' / 'U-dimer-1.89-9au' / 'STRU'} {job_folder / 'STRU'}")
     print(f"  diff {ROOT / 'project' / 'pbe' / 'primitive_jy' / nsw_filename} {nsw_path}")
     print()
-    print("或直接查看生成的文件:")
+    print("Or inspect the generated files directly:")
     print(f"  ls -la {output_root}")
     print(f"  ls -la {job_folder}")
     print(f"  ls -la {primitive_jy_dir}")

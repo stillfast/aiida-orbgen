@@ -1,40 +1,42 @@
 """
 Interfaces for aiida_orbgen
 
-统一的接口层，对外暴露简单的高级 API。
-data 层负责 AiiDA 节点转换，workflows 层负责 AiiDA 工作流。
-本层提供函数式接口，方便测试和快速调用。
+Unified interface layer that exposes a small, high-level API.
+The ``data`` layer handles AiiDA node conversion; the ``workflows`` layer
+handles AiiDA workflows.
+This layer offers functional entry points that are easy to test and call.
 
-主要 API
+Main API
 --------
 
-NSW (原始轨道)
+NSW (primitive orbitals)
 ~~~~~~~~~~~~~~
-- :func:`generate_nsw`              生成单个 .orb 原始球 Bessel 轨道
-- :func:`compute_nbes_per_l`        计算每个角动量通道的 Bessel 函数个数
+- :func:`generate_nsw`              generate a single primitive spherical Bessel .orb orbital
+- :func:`compute_nbes_per_l`        count the Bessel functions of each angular-momentum channel
 
-INPUT (ABACUS 主输入)
+INPUT (ABACUS main input)
 ~~~~~~~~~~~~~~~~~~~~~
-- :func:`generate_incar`            从 SIAB JSON 生成 ABACUS INPUT
-- :func:`parse_incar`               从 INPUT 文件反向解析为 dict
+- :func:`generate_incar`            build the ABACUS INPUT from a SIAB JSON
+- :func:`parse_incar`               parse an INPUT file back into a dict
 
-STRU (ABACUS 结构)
+STRU (ABACUS structure)
 ~~~~~~~~~~~~~~~~~~
-- :func:`generate_stru`             从 SIAB JSON 生成 ABACUS STRU
-- :func:`dft_folder_name`           SIAB 标准 DFT 任务文件夹名
-- :func:`generate_atom_coords`      计算 SIAB 几何原型的原子坐标
-- :func:`parse_stru`                从 STRU 文件反向解析为 dict
-- :func:`read_stru_as_ase`          从 STRU 文件读出 ASE ``Atoms`` 对象
+- :func:`generate_stru`             build the ABACUS STRU from a SIAB JSON
+- :func:`dft_folder_name`           canonical SIAB DFT job folder name
+- :func:`generate_atom_coords`      compute the atomic coordinates of a SIAB geometry prototype
+- :func:`parse_stru`                parse a STRU file back into a dict
+- :func:`read_stru_as_ase`          read a STRU file into an ASE ``Atoms`` object
 
-Pipeline (一键)
+Pipeline (one shot)
 ~~~~~~~~~~~~~~~
-- :func:`generate_all`              一次生成 NSW + 多个 INPUT/STRU
-- :func:`generate_all_from_json`    从 JSON 路径一键生成
+- :func:`generate_all`              generate NSW plus several INPUT/STRU in one go
+- :func:`generate_all_from_json`    one-shot generation from a JSON path
 
-底层依赖
+Underlying dependencies
 --------
-所有接口都委托给 ``SIAB`` (ABACUS-CSW-NAO) 完成实际计算，确保默认值
-和文件格式与 SIAB 主线一致。
+Every interface delegates the actual computation to ``SIAB``
+(ABACUS-CSW-NAO), keeping the defaults and the file formats consistent with
+the SIAB mainline.
 """
 
 from aiida_orbgen.interfaces.nsw import (

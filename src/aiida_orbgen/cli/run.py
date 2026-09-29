@@ -11,6 +11,7 @@ Sub-commands
               the final CSW-NAO orbital produced by SIAB's spillage
               minimisation) into ``-o DIR``.
 ``check``   — validate an ``input.json`` offline and print the execution plan.
+``select``  — record which grid point a report chose, as a reusable bundle.
 ``fetch-dft`` — download/rebuild the reference DFT tree from AiiDA provenance.
 
 The legacy ``submit-siab {calc,gridsearch}`` sub-command was removed on
@@ -45,6 +46,7 @@ See ``README.md`` for the full ``input.json`` and preset reference.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -63,7 +65,15 @@ from aiida_orbgen.utils.cal_json import (
 )
 from aiida_orbgen.utils.config import ConfigLoader
 
-__all__ = ["main", "build_parser", "cmd_run", "cmd_report", "cmd_check"]
+__all__ = [
+    "main",
+    "build_parser",
+    "cmd_run",
+    "cmd_report",
+    "cmd_fetch_dft",
+    "cmd_select",
+    "cmd_check",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +413,108 @@ def cmd_fetch_dft(args) -> int:
 # ---------------------------------------------------------------------------
 
 
+def cmd_select(args) -> int:
+    """Record which grid point a report chose (and make it reusable)."""
+    from aiida import load_profile
+    from aiida.orm import load_node
+
+    from aiida_orbgen.utils.cal_json import collect_job_entries, read_output_json
+    from aiida_orbgen.utils.report.orbgen import collect_summary
+    from aiida_orbgen.utils.select import (
+        choose_point,
+        selection_payload,
+        write_selection,
+    )
+
+    load_profile(args.profile)
+    data = read_output_json(args.input_json)
+    entries = collect_job_entries(data)
+    if not entries:
+        print(f"No WorkChain identifier in {args.input_json}", file=sys.stderr)
+        return 1
+
+    written_any = False
+    for label, identifier in entries:
+        node = load_node(identifier)
+        summary = collect_summary(node)
+        try:
+            point = choose_point(
+                summary,
+                l_max=args.l_max,
+                r_cut=args.r_cut,
+                calc_pk=args.calc_pk,
+            )
+        except ValueError as exc:
+            print(f"  {label}: {exc}", file=sys.stderr)
+            return 1
+        if point is None:
+            print(f"  {label}: no grid point matched the request", file=sys.stderr)
+            continue
+
+        chosen_by = "auto"
+        if args.calc_pk is not None:
+            chosen_by = f"--calc-pk {args.calc_pk}"
+        elif args.l_max is not None:
+            chosen_by = f"--l-max {args.l_max} --r-cut {args.r_cut}"
+
+        # SIAB config of the chosen point: explicit file > the node's stored copy,
+        # with the grid point applied (same code path as `report`).
+        siab_config = None
+        try:
+            if args.siab_json is not None:
+                with open(args.siab_json, "r", encoding="utf-8") as handle:
+                    from aiida_orbgen.interfaces.nsw import apply_grid_point
+
+                    siab_config = apply_grid_point(
+                        json.load(handle), point.l_max, point.r_cut
+                    )
+            else:
+                from aiida_orbgen.utils.report.orbitals import _build_siab_config
+
+                siab_config = _build_siab_config(
+                    load_node(point.pk), point.l_max, point.r_cut
+                )
+        except Exception as exc:  # noqa: BLE001 — the bundle is still useful
+            print(f"  {label}: cannot materialise the SIAB config: {exc}",
+                  file=sys.stderr)
+
+        if siab_config is not None:
+            # Validating here is the point of the exercise: a point whose scheme
+            # the primitive basis cannot provide would otherwise be discovered
+            # inside SIAB, after another reference DFT.
+            from aiida_orbgen.utils.config import validate_siab_config
+
+            try:
+                for warning in validate_siab_config(
+                    siab_config, source="selected config"
+                ):
+                    print(f"      warning: {warning}", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  {label}: selected config is invalid: {exc}", file=sys.stderr)
+                return 1
+
+        base_input = None
+        if args.input_config is not None and Path(args.input_config).is_file():
+            base_input = json.loads(Path(args.input_config).read_text())
+        payload = selection_payload(
+            summary, point, chosen_by=chosen_by,
+            siab_config=siab_config, base_input=base_input,
+        )
+        name = f"lmax{point.l_max}_rcut{point.r_cut:g}"
+        written = write_selection(
+            args.output_dir, payload, siab_config=siab_config, point_name=name,
+        )
+        written_any = True
+
+        print(f"  {label} [{summary.node_uuid[:8]}]: {payload['description']}")
+        for kind, path in written.items():
+            print(f"      {kind:11s}: {path}")
+        if siab_config is not None:
+            print("      next       : aiida-orbgen report -i output.json "
+                  f"--siab-json {written['siab_config']} --calc-pk {point.pk}")
+    return 0 if written_any else 1
+
+
 def cmd_check(args) -> int:
     """Offline validation of an ``input.json`` (no AiiDA profile needed)."""
     input_json = Path(args.input_json).resolve()
@@ -430,7 +542,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="aiida-orbgen",
         description=(
             "AiiDA plugin for ABACUS CSW-NAO orbital generation.\n"
-            "Sub-commands: run, report, fetch-dft, check."
+            "Sub-commands: run, report, select, fetch-dft, check."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -590,6 +702,38 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--workflow", choices=sorted(METHOD_SPECS), default=None,
                          help="Override the workflow.")
     p_check.set_defaults(func=cmd_check)
+
+    # ── select ───────────────────────────────────────────────────────────
+    p_select = sub.add_parser(
+        "select",
+        help="Record which grid point a report chose (selected.json + config).",
+        description=(
+            "Choose one grid point of a finished grid search — the cheapest "
+            "acceptable one by default, or an explicit --l-max/--r-cut / "
+            "--calc-pk — and write a small bundle: selected.json (the decision), "
+            "orbgen_<point>.json (its validated SIAB config, usable with "
+            "`report --siab-json`) and input.selected.json (an input.json whose "
+            "orbgen slot is pinned to that single candidate, so `run` submits "
+            "one orbgen.calc). Parameters/ presets are never rewritten."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_select.add_argument("-i", "--input", dest="input_json", required=True,
+                          help="Path to the output.json written by `aiida-orbgen run`.")
+    p_select.add_argument("-o", "--output-dir", dest="output_dir", default=".", type=Path,
+                          help="Where to write the selection bundle (default: .).")
+    p_select.add_argument("-p", "--profile", default=None, help="AiiDA profile.")
+    p_select.add_argument("--l-max", dest="l_max", type=int, default=None,
+                          help="Chosen highest angular momentum (with --r-cut).")
+    p_select.add_argument("--r-cut", dest="r_cut", type=float, default=None,
+                          help="Chosen cutoff radius in a.u. (with --l-max).")
+    p_select.add_argument("--calc-pk", dest="calc_pk", type=int, default=None,
+                          help="Chosen OrbgenCalcWorkChain instead of the automatic pick.")
+    p_select.add_argument("--siab-json", dest="siab_json", default=None, type=Path,
+                          help="SIAB config to record instead of the one stored on the node.")
+    p_select.add_argument("--input-config", dest="input_config", default=None, type=Path,
+                          help="input.json to derive input.selected.json from.")
+    p_select.set_defaults(func=cmd_select)
 
     # The legacy ``submit-siab`` sub-command (``cli/submit_siab.py``) was
     # removed on 2026-09-29: it assembled its own workchain inputs without

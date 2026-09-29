@@ -1,11 +1,12 @@
 """
-aiida_orbgen.static - 静态配置 (默认参数模板 + JSON 加载)
+aiida_orbgen.static - static configuration (default parameter templates + JSON loading)
 
-将 ``aiida-orbgen`` 命令行工具 / Python API 使用的所有默认参数集中放在这里, 方便:
+All defaults used by the ``aiida-orbgen`` command line tool / Python API live
+here, so that:
 
-- 一处修改, 全局生效
-- 用户可以 ``from aiida_orbgen.static import DEFAULTS`` 引用
-- CLI 标志覆盖默认值
+- A single edit takes effect everywhere
+- Users can reference them via ``from aiida_orbgen.static import DEFAULTS``
+- CLI flags override the defaults
 """
 
 from aiida_orbgen.static.defaults import (

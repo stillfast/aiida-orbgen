@@ -1,14 +1,14 @@
 """
-AbacusDftCalc: 读取 JSON 配置, 提交一个 ``abacus.base`` 任务。
+AbacusDftCalc: read a JSON config and submit one ``abacus.base`` job.
 
-输入格式严格对齐 ``abacus.base`` workchain:
+The input format mirrors the ``abacus.base`` workchain exactly:
 
 .. code-block:: python
 
     inputs = {
         "abacus": {
             "code": code,                              # Code
-            "parameters": {"input": {...}},            # Dict, 实际 INPUT 在 'input' 子键下
+            "parameters": {"input": {...}},            # Dict; real INPUT under the 'input' key
             "structure": StructureData(ase=atoms),     # StructureData
             "metadata": {
                 "options": {                           # resources, queue, ...
@@ -25,8 +25,8 @@ AbacusDftCalc: 读取 JSON 配置, 提交一个 ``abacus.base`` 任务。
         "pseudo_family": "apns-eff-fam",               # str
     }
 
-JSON config 示例
-----------------
+Example JSON config
+-------------------
 
 .. code-block:: json
 
@@ -36,10 +36,10 @@ JSON config 示例
       "code": "abacus_lts@yeesuan",
       "pseudo_family": "apns-eff-fam",
 
-      "input_file": "/abs/INPUT",                      // 二选一
-      "input_params": { "ecutwfc": 100, ... },         // 二选一
+      "input_file": "/abs/INPUT",                      // pick one of the two
+      "input_params": { "ecutwfc": 100, ... },         // pick one of the two
 
-      "structure_file": "/abs/STRU",                   // STRU 文件
+      "structure_file": "/abs/STRU",                   // STRU file
 
       "kpoints_mesh": [4, 4, 4],
       "kpoints_offset": [0, 0, 0],
@@ -62,8 +62,8 @@ JSON config 示例
       "output_dir": "./dry_run_submissions"
     }
 
-使用
-----
+Usage
+-----
 
 .. code-block:: python
 
@@ -73,7 +73,7 @@ JSON config 示例
     inputs = build_inputs_from_config(cfg)
 
     if cfg.get("dry_run", True):
-        # 写出参考 JSON 供检查
+        # write a reference JSON for inspection
         write_dry_run(inputs, cfg["output_dir"])
     else:
         submit_from_config(cfg)
@@ -102,7 +102,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# JSON 加载
+# JSON loading
 # ---------------------------------------------------------------------------
 
 
@@ -120,12 +120,12 @@ def load_config(path: str | Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Inputs 构造
+# Building the inputs
 # ---------------------------------------------------------------------------
 
 
 def _build_input_dict(cfg: dict) -> Dict[str, Any]:
-    """从 cfg 构造 ``parameters = {"input": {...}}`` 形式的 dict。"""
+    """Build a ``parameters = {"input": {...}}`` dict from ``cfg``."""
     if "input_file" in cfg:
         return IncarData.from_file(cfg["input_file"]).get_dict()
     if "input_params" in cfg:
@@ -134,14 +134,14 @@ def _build_input_dict(cfg: dict) -> Dict[str, Any]:
 
 
 def _build_structure_node(cfg: dict) -> StructureData:
-    """从 cfg 构造 ase.Atoms (供 AiiDA StructureData 使用)。"""
+    """Build ase.Atoms from ``cfg`` (for use by AiiDA StructureData)."""
     if "structure_file" not in cfg:
         raise ValueError("Config must contain 'structure_file' (path to STRU).")
     return StructureData.from_stru(cfg["structure_file"])
 
 
 def _build_kpoints_node(cfg: dict) -> Optional[orm.KpointsData]:
-    """从 cfg 构造 KpointsData, 没有则返回 None (使用 abacus.base 默认值)。"""
+    """Build a KpointsData from ``cfg``; return None when absent (abacus.base defaults apply)."""
     if "kpoints_mesh" in cfg:
         kp = orm.KpointsData()
         kp.set_kpoints_mesh(
@@ -157,26 +157,26 @@ def _build_kpoints_node(cfg: dict) -> Optional[orm.KpointsData]:
 
 
 def build_inputs_from_config(cfg: dict) -> Dict[str, Any]:
-    """从 JSON config 构造 ``abacus.base`` workchain 的 inputs dict。
+    """Build the inputs dict of the ``abacus.base`` workchain from a JSON config.
 
     Parameters
     ----------
     cfg : dict
-        JSON config 解析后的 dict (见模块顶部示例)。
+        Dict parsed from the JSON config (see the example at the top of the module).
 
     Returns
     -------
     dict
-        可直接 ``submit(AbacusBaseWorkChain, **inputs)`` 的字典。
-        其中 ``abacus.structure`` 是 ``ase.Atoms``, 提交时
-        ``_materialize_inputs`` 会包装成 AiiDA ``StructureData``。
+        A dict that can be passed straight to ``submit(AbacusBaseWorkChain, **inputs)``.
+        Its ``abacus.structure`` entry is ``ase.Atoms``; on submission
+        ``_materialize_inputs`` wraps it into an AiiDA ``StructureData``.
 
     Notes
     -----
-    本函数**只构造 inputs**, 不调用 ``orm.load_code`` / 不连接 AiiDA,
-    因此可以安全地在 dry-run 模式 (不加载 profile) 下使用。
-    真正提交时, 提交函数会用 ``orm.load_code`` 把 ``"code"`` 字符串
-    解析为 Code 对象。
+    This function **only builds the inputs**: it never calls ``orm.load_code``
+    and never connects to AiiDA, so it is safe to use in dry-run mode (without
+    loading a profile).  The submission helper is what actually resolves the
+    ``"code"`` string into a Code object via ``orm.load_code``.
     """
     if "code" not in cfg:
         raise ValueError("Config must contain 'code' (AiiDA code label).")
@@ -194,7 +194,7 @@ def build_inputs_from_config(cfg: dict) -> Dict[str, Any]:
     abacus_inputs: Dict[str, Any] = {
         "code": cfg["code"],
         "parameters": {"input": input_params},
-        "structure": atoms,  # ase.Atoms, 提交时再包装成 StructureData
+        "structure": atoms,  # ase.Atoms; wrapped into StructureData on submission
         "metadata": {
             "options": metadata.get("options", {}),
             "label": label,
@@ -207,7 +207,7 @@ def build_inputs_from_config(cfg: dict) -> Dict[str, Any]:
         "pseudo_family": cfg["pseudo_family"],
     }
 
-    # K 点 (可选)
+    # K-points (optional)
     kp = _build_kpoints_node(cfg)
     if kp is not None:
         inputs["kpoints"] = kp
@@ -216,13 +216,13 @@ def build_inputs_from_config(cfg: dict) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 提交 / dry-run
+# Submission / dry-run
 # ---------------------------------------------------------------------------
 
 
 def _to_serializable(obj: Any) -> Any:
-    """把 inputs 里的不可序列化对象转成 JSON 可写的形式 (供 dry-run)。"""
-    # numpy 标量 -> Python 原生
+    """Convert the non-serializable objects in ``inputs`` into JSON-writable form (for dry-run)."""
+    # numpy scalar -> native Python
     if hasattr(obj, "item") and callable(obj.item) and not isinstance(obj, (str, bytes)):
         try:
             return obj.item()
@@ -233,13 +233,13 @@ def _to_serializable(obj: Any) -> Any:
         return {k: _to_serializable(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_to_serializable(x) for x in obj]
-    # numpy 数组
+    # numpy array
     if hasattr(obj, "tolist") and callable(obj.tolist):
         try:
             return obj.tolist()
         except Exception:
             pass
-    # ase.Atoms — 只存必要字段
+    # ase.Atoms -- keep only the necessary fields
     if hasattr(obj, "get_chemical_symbols") and hasattr(obj, "get_cell"):
         return {
             "_type": "ase.Atoms",
@@ -248,7 +248,7 @@ def _to_serializable(obj: Any) -> Any:
             "positions_angstrom": obj.get_positions().tolist(),
             "pbc": [bool(x) for x in obj.pbc],
         }
-    # KpointsData — 序列化 mesh / offset
+    # KpointsData -- serialize mesh / offset
     if isinstance(obj, orm.KpointsData):
         try:
             mesh, offset = obj.get_kpoints_mesh()
@@ -263,7 +263,7 @@ def _to_serializable(obj: Any) -> Any:
 
 
 def write_dry_run(inputs: Dict[str, Any], output_dir: str | Path) -> Path:
-    """把 inputs 写到 ``output_dir/dry_run_inputs.json`` (供人工检查)。"""
+    """Write ``inputs`` to ``output_dir/dry_run_inputs.json`` (for manual inspection)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / "dry_run_inputs.json"
@@ -276,7 +276,7 @@ def write_dry_run(inputs: Dict[str, Any], output_dir: str | Path) -> Path:
 
 
 def _materialize_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    """把 inputs 里的 ``atoms`` / code 字符串实例化成 AiiDA 节点 / Code。"""
+    """Materialize the ``atoms`` / code string in ``inputs`` into AiiDA nodes / Code."""
     abacus = dict(inputs["abacus"])
 
     # code: str -> Code
@@ -297,12 +297,12 @@ def _materialize_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def submit_from_config(cfg: dict) -> int:
-    """从 config 提交一个 ``abacus.base`` workchain。
+    """Submit one ``abacus.base`` workchain from a config.
 
     Returns
     -------
     int
-        提交后节点的 PK。
+        PK of the submitted node.
     """
     workchain_name = cfg.get("workchain", "abacus.base")
     WC = WorkflowFactory(workchain_name)
@@ -316,7 +316,7 @@ def submit_from_config(cfg: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 3 层架构的入口: 用 interfaces/ 生成的 INPUT/STRU 文件, 经 data/ 转 AiiDA 节点
+# Three-layer entry point: interfaces/ writes INPUT/STRU, data/ reads them into AiiDA nodes
 # ---------------------------------------------------------------------------
 
 
@@ -334,55 +334,55 @@ def build_abacus_json_from_files(
     orbital_path: Optional[str] = None,
     output_dir: str = "./dry_run_submissions",
 ) -> Dict[str, Any]:
-    """用已生成的 INPUT + STRU 文件, 构造 abacus.base JSON config。
+    """Build an abacus.base JSON config from already generated INPUT + STRU files.
 
-    **这是 3 层架构的顶层入口**:
+    **This is the top-level entry point of the three-layer architecture**:
 
-    1. ``interfaces/`` 已写出 ``input_file`` (INPUT) 和 ``structure_file`` (STRU);
-    2. 本函数用 ``data.input.IncarData.from_file`` 和
-       ``data.structure.StructureData.from_stru`` 把它们读回 AiiDA 数据节点;
-    3. 拼装一个 ``abacus.base`` JSON config (可写盘, 可提交)。
+    1. ``interfaces/`` has already written ``input_file`` (INPUT) and ``structure_file`` (STRU);
+    2. this function reads them back into AiiDA data nodes with
+       ``data.input.IncarData.from_file`` and ``data.structure.StructureData.from_stru``;
+    3. it assembles an ``abacus.base`` JSON config (writable to disk and submittable).
 
     Parameters
     ----------
     input_file : str
-        ABACUS INPUT 文件路径 (通常由 ``interfaces.incar.generate_incar`` 生成)。
+        Path to the ABACUS INPUT file (usually generated by ``interfaces.incar.generate_incar``).
     structure_file : str
-        ABACUS STRU 文件路径 (通常由 ``interfaces.stru.generate_stru`` 生成)。
+        Path to the ABACUS STRU file (usually generated by ``interfaces.stru.generate_stru``).
     code : str
-        AiiDA code 标签, 例如 ``abacus_lts@yeesuan``。
+        AiiDA code label, e.g. ``abacus_lts@yeesuan``.
     pseudo_family : str
-        AiiDA pseudo 族标签。
+        AiiDA pseudo family label.
     label, description : str
-        工作流标签 / 描述。
+        Workflow label / description.
     kpoints_mesh, kpoints_offset : list, optional
-        K 点网格。默认 ``[1, 1, 1]`` (Gamma-only, SIAB 习惯)。
+        K-point mesh.  Defaults to ``[1, 1, 1]`` (Gamma-only, the SIAB convention).
     metadata_options : dict, optional
-        AiiDA scheduler options (resources, queue_name, ...)。
+        AiiDA scheduler options (resources, queue_name, ...).
     orbital_path : str, optional
-        轨道文件路径 (记录在 input_params.orbital_dir, 仅 LCAO 需要)。
+        Path to the orbital file (recorded in input_params.orbital_dir; only needed for LCAO).
     output_dir : str
-        dry-run JSON 的输出目录 (用于 ``aiida-orbgen run --dry-run``)。
+        Output directory of the dry-run JSON (used by ``aiida-orbgen run --dry-run``).
 
     Returns
     -------
     dict
-        ``abacus.base`` workchain 接受的 JSON config。
+        The JSON config accepted by the ``abacus.base`` workchain.
     """
     from aiida_orbgen.data.input import IncarData
     from aiida_orbgen.data.structure import StructureData
 
-    # 1) 用 data/ 读回 AiiDA 数据节点
+    # 1) read the files back into AiiDA data nodes through data/
     incar = IncarData.from_file(input_file)
     sd = StructureData.from_stru(structure_file)
 
-    # 2) 提取 INPUT 参数字典 (即 abacus.base 需要的 parameters.input)
+    # 2) extract the INPUT parameter dict (i.e. the parameters.input abacus.base needs)
     input_params = incar.get_dict()
-    # LCAO 时手动加 orbital_dir
+    # add orbital_dir by hand for LCAO
     if orbital_path and "orbital_dir" not in input_params:
         input_params["orbital_dir"] = orbital_path
 
-    # 3) 拼装 JSON config
+    # 3) assemble the JSON config
     if kpoints_mesh is None:
         kpoints_mesh = [1, 1, 1]
     if kpoints_offset is None:

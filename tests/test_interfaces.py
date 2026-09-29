@@ -1,15 +1,15 @@
 """
-测试 aiida_orbgen.interfaces 的接口
+Interface tests for aiida_orbgen.interfaces
 
-测试三个核心接口：
-1. generate_nsw: 生成 NSW 原始轨道
-2. generate_incar: 生成 INPUT 文件
-3. generate_stru: 生成 STRU 文件
+Tests for the three core interfaces:
+1. generate_nsw: generate the raw NSW orbital
+2. generate_incar: generate the INPUT file
+3. generate_stru: generate the STRU file
 
-运行方式：
+How to run:
     cd /home/liguozhou/abacus/calculations/orbgen/aiida_orbgen
     pytest tests/test_interfaces.py -v
-    # 或
+    # or
     python -m pytest tests/test_interfaces.py -v
 """
 
@@ -22,30 +22,30 @@ from pathlib import Path
 
 import pytest
 
-# 添加 src 到 path
+# Add src to path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
-# 添加 SIAB 到 path (ABACUS-CSW-NAO 库)
+# Add SIAB to path (ABACUS-CSW-NAO library)
 #
-# ``append`` 而不是 ``insert(0, ...)``: 这台机器上有两份 SIAB 检出, 其中
-# ``/home/liguozhou/install/ABACUS-CSW-NAO`` 未打 ``simpson`` 补丁, 在 scipy >= 1.12
-# 的环境里 ``from scipy.integrate import simps`` 直接 ImportError. 插到最前面会
-# 遮蔽正常的那份 (workspace 里的 ``.../orbgen/ABACUS-CSW-NAO``, 已改成
-# ``from scipy.integrate import simpson as simps``), 并且污染同一进程里之后跑的
-# 所有测试. 作为后备路径放在最后, 只在没有可用 SIAB 时才生效.
+# ``append`` instead of ``insert(0, ...)``: this machine has two SIAB checkouts, and
+# ``/home/liguozhou/install/ABACUS-CSW-NAO`` is not patched with ``simpson``, so under scipy >= 1.12
+# ``from scipy.integrate import simps`` raises ImportError immediately. Inserting it at the front would
+# shadow the working checkout (``.../orbgen/ABACUS-CSW-NAO`` in the workspace, already changed to
+# ``from scipy.integrate import simpson as simps``), and pollute every test that runs later in the
+# same process. It is appended as a fallback path, so it takes effect only when no usable SIAB exists.
 SIAB_PATH = Path("/home/liguozhou/install/ABACUS-CSW-NAO")
 if SIAB_PATH.exists() and str(SIAB_PATH) not in sys.path:
     sys.path.append(str(SIAB_PATH))
 
-# 检测 SIAB 是否可用
+# Check whether SIAB is available
 try:
     import SIAB  # noqa: F401
     SIAB_AVAILABLE = True
 except ImportError:
     SIAB_AVAILABLE = False
 
-# pytest skip 装饰器
+# pytest skip decorator
 siab_required = pytest.mark.skipif(
     not SIAB_AVAILABLE,
     reason="SIAB library not available. Please install from /home/liguozhou/install/ABACUS-CSW-NAO"
@@ -66,12 +66,12 @@ from aiida_orbgen.interfaces.stru import (
 
 
 # ============================================================================
-# 测试配置 (对应 U 元素的 JSON 配置)
+# Test configuration (the JSON configuration for element U)
 # ============================================================================
 
 @pytest.fixture
 def u_json_config():
-    """U 元素的 JSON 配置 (对应 project/pbe/pbe_orbgen.json)."""
+    """JSON configuration for element U (corresponds to project/pbe/pbe_orbgen.json)."""
     return {
         "element": "U",
         "pseudo_dir": "./U.pbe-n-nc.upf",
@@ -118,37 +118,37 @@ def u_json_config():
 
 @pytest.fixture
 def temp_dir():
-    """临时目录 fixture."""
+    """Temporary directory fixture."""
     tmp = tempfile.mkdtemp(prefix="aiida_orbgen_test_")
     yield tmp
     shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ============================================================================
-# 1. NSW 接口测试
+# 1. NSW interface tests
 # ============================================================================
 
 class TestNswInterface:
-    """NSW 接口测试."""
+    """NSW interface tests."""
 
     @siab_required
     def test_compute_nbes_per_l(self):
-        """测试 Bessel 函数数量计算."""
-        # U 元素: rcut=9, ecut=100, lmaxmax=4
+        """Test the Bessel function count computation."""
+        # Element U: rcut=9, ecut=100, lmaxmax=4
         nbes = compute_nbes_per_l(rcut=9, ecut=100, lmaxmax=4,
                                    primitive_type="reduced")
         assert len(nbes) == 5  # l = 0,1,2,3,4
-        # nbes 可以是 numpy.int64, 转换为 Python int
+        # nbes may be numpy.int64, so convert it to a Python int
         nbes_int = [int(n) for n in nbes]
         assert all(isinstance(n, int) for n in nbes_int)
         assert all(n >= 0 for n in nbes_int)
-        # 实际值取决于 JLZEROS 表
-        # 这里只验证数量是合理的
+        # The actual values depend on the JLZEROS table
+        # Here we only check that the counts are reasonable
         assert sum(nbes_int) > 0
 
     @siab_required
     def test_compute_nbes_normalized(self):
-        """normalized 类型每个 l 多 1."""
+        """normalized type has one extra function per l."""
         nbes_reduced = compute_nbes_per_l(
             rcut=9, ecut=100, lmaxmax=2, primitive_type="reduced"
         )
@@ -159,7 +159,7 @@ class TestNswInterface:
             assert n_n == n_r + 1
 
     def test_generate_nsw_u(self, u_json_config, temp_dir):
-        """测试生成 U 元素的 NSW 轨道."""
+        """Test generating the NSW orbital for element U."""
         output_dir = os.path.join(temp_dir, "primitive_jy")
         orb_path = generate_nsw(
             u_json_config,
@@ -167,65 +167,65 @@ class TestNswInterface:
             lmaxmax=4,
         )
 
-        # 验证文件存在
+        # Verify that the file exists
         assert os.path.exists(orb_path)
 
-        # 验证文件名
+        # Verify the file name
         basename = os.path.basename(orb_path)
         assert basename.startswith("U_gga_9au_100Ry_")
         assert basename.endswith(".orb")
 
-        # 验证文件非空
+        # Verify that the file is not empty
         assert os.path.getsize(orb_path) > 0
 
-        # 验证文件内容
+        # Verify the file content
         with open(orb_path, "r") as f:
             content = f.read()
-        # 至少应包含元素符号和参数
+        # It should at least contain the element symbol and the parameters
         assert "9" in content  # rcut
         assert "100" in content  # ecut
         assert "0.01" in content  # dr
 
     @siab_required
     def test_generate_nsw_filename_pattern(self, u_json_config, temp_dir):
-        """验证 NSW 文件名格式."""
+        """Verify the NSW file name pattern."""
         orb_path = generate_nsw(
             u_json_config,
             output_dir=temp_dir,
         )
         basename = os.path.basename(orb_path)
-        # 期望: U_gga_9au_100Ry_27s27p26d26f25g.orb
-        # 实际数量取决于 JLZEROS 表，可能略有不同
+        # Expected: U_gga_9au_100Ry_27s27p26d26f25g.orb
+        # The actual counts depend on the JLZEROS table and may differ slightly
         assert basename.startswith("U_gga_9au_100Ry_")
-        # 验证 nzeta_str 部分 (匹配数字+字母的组合)
+        # Verify the nzeta_str part (matching digit+letter combinations)
         import re
         m = re.match(r"U_gga_9au_100Ry_((?:\d+[spdfghijklmnopqrstuvwxyz]+)+)\.orb", basename)
         assert m is not None, f"Invalid filename: {basename}"
 
 
 # ============================================================================
-# 2. INCAR 接口测试
+# 2. INCAR interface tests
 # ============================================================================
 
 class TestIncarInterface:
-    """INCAR 接口测试."""
+    """INCAR interface tests."""
 
     def test_generate_incar_u(self, u_json_config, temp_dir):
-        """测试生成 U 元素的 INPUT 文件."""
+        """Test generating the INPUT file for element U."""
         output_path = os.path.join(temp_dir, "U-dimer-1.89-9au", "INPUT")
         input_path = generate_incar(u_json_config, output_path)
 
         assert os.path.exists(input_path)
         assert os.path.isfile(input_path)
 
-        # 验证文件内容
+        # Verify the file content
         with open(input_path, "r") as f:
             content = f.read()
 
-        # 必须以 INPUT_PARAMETERS 开头
+        # It must start with INPUT_PARAMETERS
         assert content.startswith("INPUT_PARAMETERS")
 
-        # 关键参数必须存在
+        # The key parameters must be present
         assert "ecutwfc" in content
         assert "150" in content  # ecutwfc = 150
         assert "basis_type" in content
@@ -242,16 +242,16 @@ class TestIncarInterface:
         assert "out_mat_hs" in content
 
     def test_incar_roundtrip(self, u_json_config, temp_dir):
-        """测试 INPUT 文件读写一致性."""
+        """Test INPUT file write/read round-trip consistency."""
         output_path = os.path.join(temp_dir, "INPUT")
 
-        # 写入
+        # Write
         generate_incar(u_json_config, output_path)
 
-        # 读回
+        # Read back
         params = parse_incar(output_path)
 
-        # 验证关键参数
+        # Verify the key parameters
         assert str(params.get("ecutwfc")) == "150"
         assert params.get("basis_type") == "lcao"
         assert str(params.get("nspin")) == "1"
@@ -262,13 +262,13 @@ class TestIncarInterface:
         assert "9" in str(params.get("bessel_nao_rcut", "0"))
 
     def test_incar_lcao_default(self, temp_dir):
-        """测试 LCAO 模式下的默认参数."""
+        """Test the default parameters in LCAO mode."""
         config = {
             "element": "Si",
             "ecutwfc": 60,
             "ecutjy": 40,
             "nspin": 1,
-            "basis_type": "lcao",  # lcao 模式
+            "basis_type": "lcao",  # lcao mode
             "bessel_nao_rcut": [7],
         }
         output_path = os.path.join(temp_dir, "INPUT")
@@ -277,7 +277,7 @@ class TestIncarInterface:
         with open(output_path) as f:
             content = f.read()
 
-        # LCAO 模式应自动添加这些参数
+        # LCAO mode should add these parameters automatically
         assert "ks_solver" in content
         assert "genelpa" in content
         assert "out_mat_hs" in content
@@ -285,7 +285,7 @@ class TestIncarInterface:
         assert "out_wfc_lcao" in content
 
     def test_incar_no_autoset(self, temp_dir):
-        """测试关闭自动填充."""
+        """Test disabling auto-fill."""
         config = {"element": "Si", "ecutwfc": 60}
         output_path = os.path.join(temp_dir, "INPUT")
         generate_incar(config, output_path, auto_set=False)
@@ -293,37 +293,37 @@ class TestIncarInterface:
         with open(output_path) as f:
             content = f.read()
 
-        # 不应有默认值
+        # There should be no default values
         assert "ks_solver" not in content
         assert "smearing_method" not in content
 
 
 # ============================================================================
-# 3. STRU 接口测试
+# 3. STRU interface tests
 # ============================================================================
 
 class TestStruInterface:
-    """STRU 接口测试."""
+    """STRU interface tests."""
 
     def test_dft_folder_name_dimer(self):
-        """测试 dimer 文件夹名."""
+        """Test the dimer folder name."""
         assert dft_folder_name("U", "dimer", 1.89, rcut=9) == "U-dimer-1.89-9au"
         assert dft_folder_name("Si", "dimer", 2.0, rcut=7) == "Si-dimer-2.00-7au"
 
     def test_dft_folder_name_monomer(self):
-        """测试 monomer 文件夹名 (无 pert)."""
+        """Test the monomer folder name (no pert)."""
         assert dft_folder_name("U", "monomer", 0) == "U-monomer"
 
     def test_dft_folder_name_no_rcut(self):
-        """测试无 rcut 的文件夹名."""
+        """Test the folder name without rcut."""
         assert dft_folder_name("U", "dimer", 1.89) == "U-dimer-1.89"
 
     def test_atom_coords_dimer(self):
-        """测试 dimer 原子坐标."""
+        """Test the dimer atomic coordinates."""
         coords = generate_atom_coords("dimer", bond_length=1.89, lattice_constant=30.0)
         assert len(coords) == 2
-        # 第一个原子在 (shift, shift, shift)
-        # 第二个原子在 (shift, shift, bond_length + shift)
+        # The first atom is at (shift, shift, shift)
+        # The second atom is at (shift, shift, bond_length + shift)
         shift = 30.0 / 2 / 1.8897259886
         assert abs(coords[0][0] - shift) < 1e-6
         assert abs(coords[0][1] - shift) < 1e-6
@@ -331,32 +331,32 @@ class TestStruInterface:
         assert abs(coords[1][2] - 1.89 - shift) < 1e-6
 
     def test_atom_coords_monomer(self):
-        """测试 monomer 原子坐标."""
+        """Test the monomer atomic coordinates."""
         coords = generate_atom_coords("monomer", bond_length=0.0, lattice_constant=30.0)
         assert len(coords) == 1
 
     def test_atom_coords_trimer(self):
-        """测试 trimer 原子坐标."""
+        """Test the trimer atomic coordinates."""
         coords = generate_atom_coords("trimer", bond_length=2.0, lattice_constant=30.0)
         assert len(coords) == 3
 
     def test_atom_coords_octahedron(self):
-        """测试 octahedron 原子坐标."""
+        """Test the octahedron atomic coordinates."""
         coords = generate_atom_coords("octahedron", bond_length=2.0, lattice_constant=30.0)
         assert len(coords) == 6
 
     def test_atom_coords_cube(self):
-        """测试 cube 原子坐标."""
+        """Test the cube atomic coordinates."""
         coords = generate_atom_coords("cube", bond_length=2.0, lattice_constant=30.0)
         assert len(coords) == 8
 
     def test_atom_coords_invalid_proto(self):
-        """测试非法 proto."""
+        """Test an invalid proto."""
         with pytest.raises(ValueError):
             generate_atom_coords("invalid_proto", 2.0, 30.0)
 
     def test_generate_stru_u(self, u_json_config, temp_dir):
-        """测试生成 U 元素的 STRU 文件."""
+        """Test generating the STRU file for element U."""
         output_path = os.path.join(temp_dir, "U-dimer-1.89-9au", "STRU")
         orb_filename = "U_gga_9au_100Ry_27s27p26d26f25g.orb"
         stru_path = generate_stru(
@@ -368,11 +368,11 @@ class TestStruInterface:
 
         assert os.path.exists(stru_path)
 
-        # 验证内容
+        # Verify the content
         with open(stru_path, "r") as f:
             content = f.read()
 
-        # 必须包含的段
+        # Sections that must be present
         assert "ATOMIC_SPECIES" in content
         assert "U" in content
         assert "U.pbe-n-nc.upf" in content
@@ -383,15 +383,15 @@ class TestStruInterface:
         assert "ATOMIC_POSITIONS" in content
         assert "Cartesian_angstrom_center_xyz" in content
 
-        # 验证原子坐标: 第一个原子 (shift, shift, shift), 第二个 (shift, shift, bond_length+shift)
+        # Verify the atomic coordinates: first atom (shift, shift, shift), second (shift, shift, bond_length+shift)
         # shift = 30.0 / 2 / 1.8897259886 = 7.93765873
-        # 第二个原子的 z 坐标 = 1.89 + 7.93765873 = 9.82765873
+        # The z coordinate of the second atom = 1.89 + 7.93765873 = 9.82765873
         shift = 30.0 / 2 / 1.8897259886
         expected_z = 1.89 + shift
         assert f"{expected_z:.8f}" in content
 
     def test_generate_stru_monomer(self, u_json_config, temp_dir):
-        """测试生成 monomer 的 STRU."""
+        """Test generating the monomer STRU."""
         u_json_config["geoms"][0]["proto"] = "monomer"
         u_json_config["geoms"][0]["pertmags"] = [0.0]
 
@@ -406,34 +406,34 @@ class TestStruInterface:
         with open(stru_path, "r") as f:
             content = f.read()
         assert "ATOMIC_POSITIONS" in content
-        # monomer 只有 1 个原子
+        # monomer has only 1 atom
         assert "1       //number of atoms" in content
 
     def test_generate_stru_nspin2(self, u_json_config, temp_dir):
-        """测试 nspin=2 时的 starting magnetization."""
+        """Test the starting magnetization for nspin=2."""
         u_json_config["geoms"][0]["nspin"] = 2
         output_path = os.path.join(temp_dir, "U-dimer-1.89-9au", "STRU")
         generate_stru(u_json_config, output_path, bond_length=1.89)
 
         with open(output_path, "r") as f:
             content = f.read()
-        # nspin=2 时 starting_magnetization = 2.0
+        # with nspin=2, starting_magnetization = 2.0
         assert "2.00" in content
 
 
 # ============================================================================
-# 3.5 ASE 转换测试
+# 3.5 ASE conversion tests
 # ============================================================================
 
 class TestAseConversion:
-    """read_stru_as_ase + verify_ase_atoms 测试."""
+    """read_stru_as_ase + verify_ase_atoms tests."""
 
     def test_read_stru_as_ase_dimer(self, u_json_config, temp_dir):
-        """读取 dimer 的 STRU 并验证 ASE 转换正确性."""
+        """Read the dimer STRU and verify that the ASE conversion is correct."""
         from ase.io import read as ase_read
         from ase import Atoms
 
-        # 先生成 STRU
+        # First generate the STRU
         output_path = os.path.join(temp_dir, "U-dimer-2.75-9au", "STRU")
         generate_stru(
             u_json_config,
@@ -442,36 +442,36 @@ class TestAseConversion:
             orb_filename="U_gga_9au_100Ry_27s27p26d26f25g.orb",
         )
 
-        # 1. 直接用 ASE 读应当失败
+        # 1. Reading it directly with ASE should fail
         with pytest.raises(AssertionError):
             ase_read(output_path, format="abacus")
 
-        # 2. 用我们的 read_stru_as_ase 应当成功
+        # 2. Reading it with our read_stru_as_ase should succeed
         atoms = read_stru_as_ase(output_path)
         assert isinstance(atoms, Atoms)
         assert atoms.get_chemical_formula() == "U2"
         assert len(atoms) == 2
         assert all(atoms.pbc)
 
-        # 3. 验证位置: 第一个原子在 (7.9377, 7.9377, 7.9377) 附近
+        # 3. Verify the positions: the first atom is near (7.9377, 7.9377, 7.9377)
         import numpy as np
         shift = 30.0 / 2 / 1.8897259886
         np.testing.assert_allclose(
             atoms.positions[0], [shift, shift, shift], atol=1e-6
         )
-        # 第二个原子 z = shift + 2.75
+        # The second atom: z = shift + 2.75
         np.testing.assert_allclose(
             atoms.positions[1], [shift, shift, shift + 2.75], atol=1e-6
         )
 
-        # 4. 验证 cell: 15.875 Å (30 Bohr / 1.8897)
+        # 4. Verify the cell: 15.875 Å (30 Bohr / 1.8897)
         cell_ang = 30.0 / 1.8897259886
         np.testing.assert_allclose(
             atoms.cell.array, np.eye(3) * cell_ang, atol=1e-6
         )
 
     def test_verify_ase_atoms_dimer(self, u_json_config, temp_dir):
-        """verify_ase_atoms 报告应全 ok."""
+        """verify_ase_atoms report should be all ok."""
         output_path = os.path.join(temp_dir, "U-dimer-2.75-9au", "STRU")
         generate_stru(
             u_json_config,
@@ -492,7 +492,7 @@ class TestAseConversion:
             "U_gga_9au_100Ry_27s27p26d26f25g.orb"
 
     def test_read_stru_as_ase_monomer(self, u_json_config, temp_dir):
-        """读取 monomer STRU: 1 个原子."""
+        """Read the monomer STRU: 1 atom."""
         u_json_config["geoms"][0]["proto"] = "monomer"
         u_json_config["geoms"][0]["pertmags"] = [0.0]
         output_path = os.path.join(temp_dir, "U-monomer-9au", "STRU")
@@ -509,10 +509,10 @@ class TestAseConversion:
 
 
 class TestParamsStruToAse:
-    """params_stru dict → ase.Atoms 转换测试."""
+    """params_stru dict → ase.Atoms conversion tests."""
 
     def _make_params_stru(self, bond_length=2.75, nspin=1):
-        """构造一个 dimmer 风格的 params_stru."""
+        """Build a dimer-style params_stru."""
         mag_each = 0.0 if nspin == 1 else 2.0
         m_vec = [0, 0, 0] if nspin == 1 else [0, 0, mag_each]
         return {
@@ -537,7 +537,7 @@ class TestParamsStruToAse:
         }
 
     def test_basic_conversion(self):
-        """基本转换: U-dimer."""
+        """Basic conversion: U-dimer."""
         atoms = params_stru_to_ase(self._make_params_stru(2.75))
         assert atoms.get_chemical_formula() == "U2"
         assert len(atoms) == 2
@@ -546,21 +546,21 @@ class TestParamsStruToAse:
         np.testing.assert_allclose(
             atoms.cell.array, np.eye(3) * 15.875317469822937, atol=1e-8
         )
-        # 位置 (Angstrom)
+        # Positions (Angstrom)
         assert atoms.positions[0, 2] == 7.93765873
         assert abs(atoms.positions[1, 2] - 10.68765873) < 1e-6
 
     def test_magnetic_moments_collinear(self):
-        """共线磁矩: m = [0, 0, 2.0] 保留为 3-vector 形式."""
+        """Collinear magnetic moments: m = [0, 0, 2.0] kept in 3-vector form."""
         params_stru = self._make_params_stru(nspin=2)
         atoms = params_stru_to_ase(params_stru)
         m = atoms.get_initial_magnetic_moments()
-        # ASE 完整保留 3-vector (不会自动 collapse 到 z 分量)
+        # ASE keeps the full 3-vector (it does not collapse to the z component)
         import numpy as np
         np.testing.assert_allclose(m, [[0, 0, 2.0], [0, 0, 2.0]], atol=1e-8)
 
     def test_masses_preserved(self):
-        """质量传递正确."""
+        """Masses are transferred correctly."""
         params_stru = self._make_params_stru()
         params_stru["species"][0]["mass"] = 238.03
         atoms = params_stru_to_ase(params_stru)
@@ -568,9 +568,9 @@ class TestParamsStruToAse:
         np.testing.assert_allclose(atoms.get_masses(), [238.03, 238.03])
 
     def test_multi_species(self):
-        """多元素: 比如 U-O."""
+        """Multiple species: e.g. U-O."""
         params_stru = self._make_params_stru()
-        # 在末尾追加一个 O species
+        # Append an O species at the end
         params_stru["species"].append({
             "symbol": "O",
             "mass": 15.999,
@@ -583,17 +583,17 @@ class TestParamsStruToAse:
             ],
         })
         atoms = params_stru_to_ase(params_stru)
-        # 用元素计数核对 (不依赖 ASE formula 的输出顺序)
+        # Check by element counts (independent of the ASE formula output order)
         from collections import Counter
         assert Counter(atoms.get_chemical_symbols()) == Counter(["U", "U", "O"])
         assert len(atoms) == 3
-        assert atoms.get_chemical_formula() in ("UUO", "OU2")  # ASE 顺序不固定
+        assert atoms.get_chemical_formula() in ("UUO", "OU2")  # ASE order is not fixed
 
     def test_direct_coords_conversion(self):
-        """Direct 分数坐标 -> Cartesian."""
+        """Direct fractional coordinates -> Cartesian."""
         params_stru = self._make_params_stru()
         params_stru["coord_type"] = "Direct"
-        # 把 Cartesian 转成 Direct (0.5, 0.5, shift/cell)
+        # Convert Cartesian to Direct (0.5, 0.5, shift/cell)
         cell_ang = 15.875317469822937
         z1 = 7.93765873 / cell_ang
         z2 = 10.68765873 / cell_ang
@@ -608,7 +608,7 @@ class TestParamsStruToAse:
                                    [7.93765873, 7.93765873, 10.68765873], atol=1e-6)
 
     def test_validate_report(self):
-        """验证报告应全 ok."""
+        """The validation report should be all ok."""
         report = params_stru_to_ase_validate(self._make_params_stru())
         for name, info in report.items():
             if isinstance(info, dict) and "ok" in info:
@@ -619,17 +619,17 @@ class TestParamsStruToAse:
         assert report["coord_type"]["is_direct"] is False
 
     def test_roundtrip_with_stru_file(self, u_json_config, temp_dir):
-        """对生成的 STRU 文件, parse → params_stru_to_ase 应与 read_stru_as_ase 等价."""
+        """For a generated STRU file, parse → params_stru_to_ase should be equivalent to read_stru_as_ase."""
         output_path = os.path.join(temp_dir, "U-dimer-2.75-9au", "STRU")
         generate_stru(
             u_json_config, output_path, bond_length=2.75,
             orb_filename="U_gga_9au_100Ry_27s27p26d26f25g.orb",
         )
 
-        # 方法 1: read_stru_as_ase
+        # Method 1: read_stru_as_ase
         atoms1 = read_stru_as_ase(output_path)
 
-        # 方法 2: parse_stru -> 构造 params_stru -> params_stru_to_ase
+        # Method 2: parse_stru -> build params_stru -> params_stru_to_ase
         parsed = parse_stru(output_path)
         params_stru = {
             "lat": {"const": parsed["lattice_constant"],
@@ -653,22 +653,22 @@ class TestParamsStruToAse:
 
 
 # ============================================================================
-# 4. 集成测试 - 完整工作流
+# 4. Integration test - full workflow
 # ============================================================================
 
 class TestIntegration:
-    """完整工作流测试."""
+    """Full workflow tests."""
 
     @siab_required
     def test_full_workflow(self, u_json_config, temp_dir):
-        """测试同时生成 NSW, INPUT, STRU 文件.
+        """Test generating the NSW, INPUT and STRU files together.
 
-        模拟 SIAB 生成:
+        Simulate the file set that SIAB generates:
         - U_gga_9au_100Ry_*s*p*d*f*g.orb (NSW)
         - U-dimer-1.89-9au/INPUT
         - U-dimer-1.89-9au/STRU
         """
-        # 1. 生成 NSW
+        # 1. Generate NSW
         nsw_path = generate_nsw(
             u_json_config,
             output_dir=os.path.join(temp_dir, "primitive_jy"),
@@ -676,7 +676,7 @@ class TestIntegration:
         )
         assert os.path.exists(nsw_path)
 
-        # 2. 生成 INPUT
+        # 2. Generate INPUT
         job_folder = os.path.join(temp_dir, "U-dimer-1.89-9au")
         os.makedirs(job_folder, exist_ok=True)
         input_path = generate_incar(
@@ -685,7 +685,7 @@ class TestIntegration:
         )
         assert os.path.exists(input_path)
 
-        # 3. 生成 STRU
+        # 3. Generate STRU
         stru_path = generate_stru(
             u_json_config,
             output_path=os.path.join(job_folder, "STRU"),
@@ -694,57 +694,57 @@ class TestIntegration:
         )
         assert os.path.exists(stru_path)
 
-        # 验证文件结构
+        # Verify the file structure
         assert os.path.isfile(nsw_path)
         assert os.path.isfile(input_path)
         assert os.path.isfile(stru_path)
 
-        # 验证 STRU 引用了 NSW 轨道
+        # Verify that the STRU references the NSW orbital
         with open(stru_path) as f:
             stru_content = f.read()
         assert os.path.basename(nsw_path) in stru_content
 
 
 # ============================================================================
-# 5. 错误处理测试
+# 5. Error handling tests
 # ============================================================================
 
 class TestErrorHandling:
-    """错误处理测试."""
+    """Error handling tests."""
 
     def test_missing_element(self, temp_dir):
-        """测试缺少 element 字段."""
+        """Test a missing element field."""
         config = {"ecutjy": 100, "bessel_nao_rcut": [9]}
         with pytest.raises(KeyError):
             generate_nsw(config, output_dir=temp_dir)
 
     def test_missing_ecutjy(self, temp_dir):
-        """测试缺少 ecutjy 字段."""
+        """Test a missing ecutjy field."""
         config = {"element": "U", "bessel_nao_rcut": [9]}
         with pytest.raises(KeyError):
             generate_nsw(config, output_dir=temp_dir)
 
     def test_invalid_proto(self):
-        """测试非法 proto."""
+        """Test an invalid proto."""
         with pytest.raises(ValueError):
             generate_atom_coords("invalid", 2.0, 30.0)
 
     def test_parse_nonexistent_file(self):
-        """测试读取不存在的文件."""
+        """Test reading a nonexistent file."""
         with pytest.raises(FileNotFoundError):
             parse_incar("/nonexistent/path/INPUT")
 
 
 # ============================================================================
-# 6. 性能/烟雾测试
+# 6. Performance/smoke tests
 # ============================================================================
 
 class TestSmoke:
-    """简单烟雾测试 - 确保接口不抛异常."""
+    """Simple smoke tests - ensure the interfaces do not raise."""
 
     @siab_required
     def test_smoke_nsw(self, u_json_config, temp_dir):
-        """快速验证 NSW 接口."""
+        """Quick check of the NSW interface."""
         try:
             generate_nsw(u_json_config, output_dir=temp_dir, lmaxmax=2)
             assert True
@@ -752,7 +752,7 @@ class TestSmoke:
             pytest.fail(f"NSW generation failed: {e}")
 
     def test_smoke_incar(self, u_json_config, temp_dir):
-        """快速验证 INCAR 接口."""
+        """Quick check of the INCAR interface."""
         try:
             generate_incar(u_json_config, os.path.join(temp_dir, "INPUT"))
             assert True
@@ -760,7 +760,7 @@ class TestSmoke:
             pytest.fail(f"INCAR generation failed: {e}")
 
     def test_smoke_stru(self, u_json_config, temp_dir):
-        """快速验证 STRU 接口."""
+        """Quick check of the STRU interface."""
         try:
             generate_stru(
                 u_json_config,

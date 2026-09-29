@@ -23,6 +23,11 @@ from aiida_orbgen.utils.cal_json import (
     write_cal_json,
 )
 from aiida_orbgen.spec import AbacusSpec, OrbgenSpec
+from aiida_orbgen.utils.select import (
+    choose_point,
+    selection_payload,
+    write_selection,
+)
 from aiida_orbgen.utils.config import (
     ConfigLoader,
     WORKFLOW_CALC,
@@ -1146,3 +1151,91 @@ def test_abacus_spec_warns_when_lcao_outputs_are_switched_off():
 
     # a pure-PW run does not need them
     assert AbacusSpec(basis=["pw"], parameters_input={"out_wfc_lcao": 0}).warnings() == []
+
+
+# ---------------------------------------------------------------------------
+#  aiida-orbgen select — recording the chosen grid point
+# ---------------------------------------------------------------------------
+def _summary_with_points():
+    def point(l_max, r_cut, pk, delta, tolerance=4.2):
+        return GridPoint(
+            l_max=l_max, r_cut=r_cut, pk=pk, exit_status=304, finished_ok=True,
+            process_state="finished", tolerance_meV=tolerance,
+            delta_max_per_atom_meV=delta, delta_max_meV=delta * 2,
+        )
+
+    return OrbgenRunSummary(
+        node_pk=410274, node_uuid="0798b3e9-668c-485e-9479-fb8fcbf42c35",
+        label="OrbgenGridSearchWorkChain", kind="gridsearch",
+        status="Finished [404]", exit_status=404, process_state="finished",
+        tolerance_meV=4.2,
+        grid=[point(3, 9.0, 410363, 205.5), point(4, 9.0, 410492, 189.3),
+              point(4, 10.0, 410517, 109.95)],
+    )
+
+
+def test_select_falls_back_to_the_workflow_choice():
+    """No point meets the tolerance, so `select` repeats the workflow's own pick."""
+    summary = _summary_with_points()
+    chosen = choose_point(summary)
+    assert chosen.pk == 410517                  # lowest Delta*E, not the first
+    assert chosen.delta_max_per_atom_meV == 109.95
+
+    # ... and says so, instead of pretending the choice is acceptable
+    payload = selection_payload(summary, chosen)
+    assert [p["acceptable"] for p in payload["selection"]["grid_points"]] == [
+        False, False, False
+    ]
+
+    # When the workflow did find an acceptable point it records it in
+    # ``summary.best`` (batch.py only sets it after a tolerance pass), and that
+    # verdict outranks the raw Delta*E ranking.
+    summary.best = {"calc_pk": 410363}
+    assert choose_point(summary).pk == 410363
+
+    # The bundle keeps every point's numbers, so the choice can be audited even
+    # when it came from an explicit request rather than from the tolerance.
+    payload = selection_payload(summary, choose_point(summary))
+    chosen_row = payload["selection"]["grid_points"][0]
+    assert (chosen_row["calc_pk"], chosen_row["delta_per_atom_meV"]) == (410363, 205.5)
+
+
+def test_select_accepts_an_explicit_point():
+    summary = _summary_with_points()
+    assert choose_point(summary, l_max=4, r_cut=10.0).pk == 410517
+    assert choose_point(summary, calc_pk=410492).pk == 410492
+    assert choose_point(summary, l_max=5, r_cut=10.0) is None
+    with pytest.raises(ValueError, match="together"):
+        choose_point(summary, l_max=4)
+
+
+def test_select_writes_a_reusable_bundle(tmp_path):
+    summary = _summary_with_points()
+    point = choose_point(summary, l_max=4, r_cut=10.0)
+    payload = selection_payload(
+        summary, point, chosen_by="--l-max 4 --r-cut 10",
+        siab_config={"element": "U", "ecutjy": 150, "bessel_nao_rcut": [10]},
+        base_input={"parameters": {"orbgen": {"u_14ve": "u_14ve"}},
+                    "profile": "aiida_profile"},
+    )
+    written = write_selection(
+        tmp_path, payload,
+        siab_config=payload["siab_config"], point_name="lmax4_rcut10",
+    )
+
+    selected = json.loads(Path(written["selection"]).read_text())
+    assert selected["selection"]["calc_pk"] == 410517
+    assert selected["selection"]["delta_per_atom_meV"] == 109.95
+    assert selected["selection"]["chosen_by"] == "--l-max 4 --r-cut 10"
+    # every grid point is recorded, so the choice can be audited later
+    assert [p["calc_pk"] for p in selected["selection"]["grid_points"]] == [
+        410363, 410492, 410517
+    ]
+    assert selected["selection"]["grid_points"][0]["acceptable"] is False
+
+    assert json.loads(Path(written["siab_config"]).read_text())["ecutjy"] == 150
+
+    reuse = json.loads(Path(written["input_json"]).read_text())
+    assert reuse["workflow"] == "orbgen.calc"          # one candidate, not a grid
+    assert reuse["parameters"]["orbgen"] == {"selected": "selected"}
+    assert reuse["static"]["selected_point"]["from_node"] == 410517

@@ -47,7 +47,7 @@ from aiida_orbgen.static.defaults import (
     apply_input_overrides,
 )
 
-# abacuslite 读 STRU → dict
+# abacuslite reads STRU → dict
 from abacuslite.io.generalio import read_stru
 
 __all__ = [
@@ -64,18 +64,18 @@ def run_siab_pipeline(
     lmax: Int,
     rcut: Float,
 ) -> dict:
-    """在 worker 节点跑 ``generate_all_from_json``, 返回任务列表。
+    """Run ``generate_all_from_json`` on the worker and report the job list.
 
     Parameters
     ----------
     siab_json : SinglefileData
-        pbe_orbgen.json 文件
+        the pbe_orbgen.json file
     output_dir : Str
-        SIAB 生成目录
+        directory SIAB generates into
     lmax : Int
-        最高角动量 (强制覆盖到 orbgen.json)
+        highest angular momentum (overrides the orbgen JSON)
     rcut : Float
-        截断半径 (强制覆盖到 orbgen.json)
+        cutoff radius in a.u. (overrides the orbgen JSON)
 
     Returns
     -------
@@ -98,7 +98,7 @@ def run_siab_pipeline(
     import json as _json
     import os as _os
 
-    # 1) 读出 JSON 内容并应用 (l_max, r_cut) —— 覆盖逻辑只有一份实现
+    # 1) read the JSON and apply (l_max, r_cut) -- one implementation only
     content = siab_json.get_content()
     if isinstance(content, bytes):
         content = content.decode("utf-8")
@@ -110,10 +110,10 @@ def run_siab_pipeline(
     with open(local_json, "w", encoding="utf-8") as f:
         _json.dump(cfg, f, indent=2)
 
-    # 2) 跑 SIAB pipeline
+    # 2) run the SIAB pipeline
     result = generate_all_from_json(local_json, output_root=run_dir)
 
-    # 3) 解析 UPF / family label
+    # 3) resolve UPF / family label
     from aiida_orbgen.calculations.pseudo_family import (
         resolve_paths_from_json,
     )
@@ -148,7 +148,7 @@ def run_siab_pipeline(
 
 
 # ===========================================================================
-#  单个 abacus.base 任务 inputs 构造
+#  inputs for one abacus.base child
 # ===========================================================================
 
 
@@ -158,47 +158,48 @@ def build_abacus_child_inputs(
     basis: str,                      # "pw" or "lcao_nsw"
     code_label: str,
     family_label: str,
-    parameters: Dict[str, Any],       # 来自 abacus.json: {"input": {...}}
+    parameters: Dict[str, Any],       # from abacus.json: {"input": {...}}
     queue_name: str,
     num_mpi: int,
     wallclock: int,
     max_memory_kb: int,
 ) -> Dict[str, Any]:
-    """构造一个 ``abacus.base`` workchain 的 inputs。
+    """Build the inputs of one ``abacus.base`` workchain.
 
     Parameters
     ----------
     dft_entry : dict
-        ``generate_all_from_json()`` 返回的 ``dft[i]`` 项
+        one ``dft[i]`` entry returned by ``generate_all_from_json()``
     basis : str
-        ``"pw"`` (平面波) 或 ``"lcao_nsw"`` (数值原子轨道, nsw=原始 SIAB)
+        ``"pw"`` (plane waves) or ``"lcao_nsw"`` (numerical atomic orbitals,
+        nsw = the primitive SIAB basis)
     code_label, family_label : str
     parameters : dict
-        来自 abacus.json 的 ``parameters`` 字段, 含 ``"input"`` 子 dict
-        (强制覆盖 SIAB 生成的 INPUT)
-    queue_name, num_mpi, wallclock, max_memory_kb : scheduler 参数
+        the ``parameters`` field of abacus.json, with its ``"input"`` sub-dict
+        (these win over the INPUT SIAB generated)
+    queue_name, num_mpi, wallclock, max_memory_kb : scheduler options
     """
     input_path = dft_entry["input"]
     stru_path = dft_entry["stru"]
 
-    # 1) INPUT → Dict (过滤 AiiDA 托管 key + apply overrides)
+    # 1) INPUT → Dict (drop AiiDA-managed keys, apply the overrides)
     siab_input = parse_incar(input_path)
     merged = apply_input_overrides(siab_input)
-    # abacus.json 的 parameters.input 优先级最高
+    # parameters.input from abacus.json has the last word
     user_input = parameters.get("input", {}) if parameters else {}
     merged.update(user_input)
 
-    # 2) 根据 basis 切 basis_type 和 ks_solver
+    # 2) switch basis_type and ks_solver according to `basis`
     if basis == "pw":
         merged["basis_type"] = "pw"
-        # PW basis 不支持 scalapack_gvx，需要切换到 PW 支持的求解器
+        # PW basis does not support scalapack_gvx; fall back to a PW solver
         if merged.get("ks_solver") == "scalapack_gvx":
             merged["ks_solver"] = "dav"
-        # PW basis 不支持 out_wfc_lcao 参数
+        # the PW basis has no out_wfc_lcao
         merged.pop("out_wfc_lcao", None)
     elif basis == "lcao_nsw":
         merged["basis_type"] = "lcao"
-        # LCAO 时需要 orbital_dir (AiiDA 从 pseudo_family 注入)
+        # LCAO needs orbital_dir (injected by AiiDA from the pseudo family)
     else:
         raise ValueError(f"Unknown basis: {basis!r}")
 

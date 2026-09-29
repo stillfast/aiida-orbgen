@@ -1,18 +1,20 @@
 """
-INPUT 接口 (类比 VASP 的 INCAR)
+INPUT interface (the VASP INCAR analogue)
 
-生成 ABACUS INPUT 文件。
+Generate ABACUS INPUT files.
 
-对应文件: {folder}/INPUT
-例: U-dimer-1.89-9au/INPUT
+Corresponding file: {folder}/INPUT
+Example: U-dimer-1.89-9au/INPUT
 
-本模块是对 SIAB 的高层封装，底层调用:
-- ``SIAB.abacus.io.autoset``           : 自动设置默认 DFT 参数
-- ``SIAB.abacus.io.dftparam_to_text``  : 字典 → INPUT 文本
+This module is a high-level wrapper around SIAB and calls, underneath:
+- ``SIAB.abacus.io.autoset``           : fill in the default DFT parameters
+- ``SIAB.abacus.io.dftparam_to_text``  : dict → INPUT text
 
-这样做的好处:
-1. 默认值始终与 SIAB 主线保持一致，避免接口与上游漂移。
-2. 接口层只负责 "JSON → ABACUS DFT 参数" 的语义映射。
+Why this is done:
+1. Defaults always stay in sync with the SIAB mainline, so the interface cannot
+   drift away from upstream.
+2. The interface layer only owns the semantic mapping "JSON → ABACUS DFT
+   parameters".
 """
 
 import os
@@ -22,12 +24,12 @@ from typing import Optional, Dict, Any
 __all__ = ["generate_incar", "parse_incar"]
 
 
-# 与 SIAB 行为保持一致：fit_basis='jy' 时强制使用 lcao 基组
+# Keep SIAB's behaviour: fit_basis='jy' forces an lcao basis set
 def _resolve_basis_type(json_config: dict, dftparam: dict) -> str:
     """
-    从 fit_basis 推断 basis_type。
+    Infer basis_type from fit_basis.
 
-    SIAB.driver.main.init 的约定:
+    Convention in SIAB.driver.main.init:
         fit_basis == 'jy'  -> basis_type == 'lcao'
         fit_basis == 'pw'  -> basis_type == 'pw'
     """
@@ -39,38 +41,40 @@ def _resolve_basis_type(json_config: dict, dftparam: dict) -> str:
 
 def _resolve_nbands(json_config: dict, dftparam: dict) -> Optional[int]:
     """
-    推断 nbands。
+    Infer nbands.
 
-    SIAB 行为: nbands 从具体几何 (geoms[i].nbands) 继承。
-    若 JSON 顶层没有提供，则从 geoms[0] 中读取。
+    SIAB behaviour: nbands is inherited from the concrete geometry
+    (geoms[i].nbands).
+    If the JSON top level does not provide it, read it from geoms[0].
     """
     if "nbands" in dftparam:
         return dftparam["nbands"]
     geoms = json_config.get("geoms", [])
     if geoms and "nbands" in geoms[0]:
         return geoms[0]["nbands"]
-    return None  # 由 SIAB.autoset 填入默认值 'auto'
+    return None  # SIAB.autoset fills in the default value 'auto'
 
 
 def _extract_dftparam(json_config: dict) -> dict:
     """
-    从 SIAB JSON 配置中提取 ABACUS DFT 输入参数。
+    Extract the ABACUS DFT input parameters from a SIAB JSON config.
 
-    通过白名单 ``SIAB.abacus.io.ABACUS_PARAMS`` 过滤掉非 ABACUS 字段
-    (例如 SIAB 专用的 ``element``/``ecutjy``/``bessel_nao_rcut`` 等)。
+    The whitelist ``SIAB.abacus.io.ABACUS_PARAMS`` filters out non-ABACUS fields
+    (such as the SIAB-only ``element``/``ecutjy``/``bessel_nao_rcut``).
     """
     from SIAB.abacus.io import ABACUS_PARAMS
 
     ABACUS_PARAM_SET = set(ABACUS_PARAMS)
     dftparam = {k: v for k, v in json_config.items() if k in ABACUS_PARAM_SET}
 
-    # 特殊推断
+    # Special-case inference
     dftparam["basis_type"] = _resolve_basis_type(json_config, dftparam)
     nbands = _resolve_nbands(json_config, dftparam)
     if nbands is not None:
         dftparam["nbands"] = nbands
 
-    # pseudo_dir 在 JSON 中可能是路径形式；保留原值（autoset 会用 './' 作默认）
+    # pseudo_dir may be a path in the JSON; keep the original value
+    # (autoset uses './' as the default)
     if "pseudo_dir" not in dftparam and "pseudo_dir" in json_config:
         dftparam["pseudo_dir"] = json_config["pseudo_dir"]
 
@@ -83,22 +87,24 @@ def generate_incar(
     auto_set: bool = True,
 ) -> str:
     """
-    生成 ABACUS INPUT 文件。
+    Generate ABACUS INPUT files.
 
     Parameters
     ----------
     json_config : dict
-        SIAB JSON 配置字典 (e.g. project/pbe/pbe_orbgen.json)。
-        顶层 ABACUS 相关字段会透传到 INPUT，其余字段被忽略。
+        SIAB JSON config dict (e.g. project/pbe/pbe_orbgen.json).
+        Top-level ABACUS-related fields are passed through to the INPUT; the
+        remaining fields are ignored.
     output_path : str
-        输出文件路径
+        Output file path
     auto_set : bool
-        是否自动填充默认参数 (default True，对应 SIAB.autoset)。
+        Whether to fill in the default parameters automatically (default True,
+        equivalent to SIAB.autoset).
 
     Returns
     -------
     str
-        生成的 INPUT 文件的绝对路径
+        Absolute path of the generated INPUT file
 
     Examples
     --------
@@ -107,7 +113,7 @@ def generate_incar(
     ...     config = json.load(f)
     >>> generate_incar(config, output_path="./U-dimer-1.89-9au/INPUT")
     """
-    # 延迟导入 SIAB，方便在没有 SIAB 的环境下 import 该模块
+    # Import SIAB lazily so this module can be imported where SIAB is absent
     from SIAB.abacus.io import autoset as _siab_autoset
     from SIAB.abacus.io import dftparam_to_text as _siab_dftparam_to_text
 
@@ -116,8 +122,8 @@ def generate_incar(
     if auto_set:
         dftparam = _siab_autoset(dftparam)
     else:
-        # 不补默认：把 bessel_nao_rcut=[9] 这种 list 转成字符串
-        # 让 ABACUS 能正确解析
+        # No defaults are filled in here: turn a list such as
+        # bessel_nao_rcut=[9] into a string so that ABACUS parses it correctly
         for k, v in list(dftparam.items()):
             if isinstance(v, list):
                 dftparam[k] = " ".join(str(x) for x in v)
@@ -135,17 +141,17 @@ def generate_incar(
 
 def parse_incar(filepath: str) -> dict:
     """
-    从 INPUT 文件读取参数。
+    Read the parameters from an INPUT file.
 
     Parameters
     ----------
     filepath : str
-        INPUT 文件路径
+        Path of the INPUT file
 
     Returns
     -------
     dict
-        解析出的参数 (值尽量推断为 int/float/str)
+        Parsed parameters (values are inferred as int/float/str where possible)
 
     Examples
     --------
@@ -165,7 +171,7 @@ def parse_incar(filepath: str) -> dict:
                 continue
             key = match.group(1)
             raw_value = match.group(2).strip()
-            # 尝试转 int / float
+            # Try int, then float
             try:
                 value: Any = int(raw_value)
             except ValueError:
