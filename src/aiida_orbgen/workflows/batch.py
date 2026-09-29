@@ -62,6 +62,7 @@ from aiida_orbgen.workflows._grid import (
 # module and existing imports (tests, report layer) use these names.
 from aiida_orbgen.workflows.results import (
     create_energies_dict,
+    create_family_label,
     create_final_results,
     create_grid_all_results,
     create_grid_summary,
@@ -616,7 +617,8 @@ class OrbgenCalcWorkChain(WorkChain):
         # Record the family the children actually used, so a later report does not
         # have to re-derive it (and cannot pick the other pseudopotential's family).
         if getattr(self.ctx, "pseudo_family_label", None):
-            self.out("pseudo_family", Str(self.ctx.pseudo_family_label))
+            self.out("pseudo_family",
+                     create_family_label(self.ctx.pseudo_family_label))
         self.report(
             f"OrbgenCalcWorkChain Finished: {n_ok} OK, {n_failed} failed"
         )

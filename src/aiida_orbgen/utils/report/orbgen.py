@@ -545,7 +545,21 @@ def render_report(
                 )
             lines.append("")
         else:
-            lines.append("_(no per-dimer energies — all calcs failed or were skipped)_")
+            lines.append("_(no per-dimer energies in the `energies` output)_")
+            if point.children and any(child["exit_status"] == 0 for child in point.children):
+                # The children ran; the output is missing because the workchain did
+                # not reach the point of writing it (an exception in `finalize`
+                # does that), so point at the log instead of blaming the children.
+                lines.append("")
+                lines.append(
+                    "Every child finished, yet the workchain has no `energies` "
+                    "output: it was most likely EXCEPTED while finalising (see the "
+                    "exit code matrix and section 4 below — the ΔE values are in the "
+                    "`extract_energies_step` lines of the process report)."
+                )
+            else:
+                lines.append("")
+                lines.append("_(the children failed or were skipped — see below)_")
             lines.append("")
         if point.children:
             lines.append("**abacus.base children:**")

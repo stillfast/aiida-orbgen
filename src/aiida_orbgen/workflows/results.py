@@ -14,14 +14,30 @@ was removed rather than left as a way for two runs to disagree.
 from __future__ import annotations
 
 from aiida.engine import calcfunction
-from aiida.orm import Dict
+from aiida.orm import Dict, Str
 
 __all__ = [
     "create_energies_dict",
     "create_final_results",
+    "create_family_label",
     "create_grid_all_results",
     "create_grid_summary",
 ]
+
+
+@calcfunction
+def create_family_label(label) -> Str:
+    """The pseudo-family label the children were given, as a *stored* node.
+
+    It has to come through a calcfunction: ``self.out("pseudo_family", Str(...))``
+    creates an unstored node inside the WorkChain, and AiiDA then aborts the whole
+    process with "tried returning an unstored Data node" — which is exactly how the
+    first run of the new pseudopotential lost its ``energies`` output (and with it
+    every ΔE number in the report; 2026-09-29).
+    """
+    if isinstance(label, Str):
+        return Str(label.value)
+    return Str(str(getattr(label, "value", label)))
 
 
 @calcfunction

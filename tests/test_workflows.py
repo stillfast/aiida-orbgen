@@ -376,6 +376,37 @@ def test_run_siab_pipeline_keeps_the_config_next_to_the_run():
     assert "siab_config.json" in source
 
 
+def test_the_workchains_return_no_unstored_data_nodes():
+    """`self.out(..., Str(...))` aborts the whole workchain — it did, on 2026-09-29.
+
+    AiiDA refuses "tried returning an unstored `Data` node" *after* the steps have
+    run, so every output written later (``energies``) is lost and the report's ΔE
+    tables come out empty.  Data nodes must come from a ``@calcfunction`` (see
+    ``workflows/results.py``) or from the context, never from a constructor call in
+    the outline.
+    """
+    data_constructors = {
+        "Str", "Dict", "Int", "Float", "Bool", "List", "SinglefileData",
+        "StructureData", "KpointsData", "FolderData", "UpfData", "RemoteData",
+    }
+    offenders = []
+    for node in ast.walk(ast.parse(BATCH.read_text(encoding="utf-8"))):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "out" and len(node.args) >= 2):
+            continue
+        value = node.args[1]
+        if not isinstance(value, ast.Call):
+            continue                     # a Name/Attribute/Subscript: ctx or inputs
+        func = value.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name in data_constructors:
+            offenders.append(f"line {node.lineno}: self.out(..., {name}(...))")
+    assert not offenders, (
+        "these would make the workchain EXCEPT instead of returning its outputs:\n"
+        + "\n".join(offenders)
+    )
+
+
 def test_the_workchain_hands_the_children_the_family_it_registered():
     """Registering a family and using another label is how "wrong pseudo" happens.
 
