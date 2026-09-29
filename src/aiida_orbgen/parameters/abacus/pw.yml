@@ -1,0 +1,26 @@
+# ---------------------------------------------------------------------------
+# parameters/abacus/pw.yml
+#
+# Plane-wave-only ABACUS preset, for the reference-convergence scans
+# (``"parameters": {"abacus": {"pw": "pw"}}``).
+#
+# ``basis: ["pw"]`` means the workchain submits no LCAO child, so one grid point
+# costs one PW SCF per geometry and produces no orbital data at all.  That is
+# exactly what is needed to converge the PW reference: the total energies of those
+# children (``misc.total_energy``) are compared across ecutwfc values.
+#
+# Everything here is owned by the *ABACUS job*; the SIAB-generated INPUT already
+# carries ecutwfc / smearing / mixing / basis_type / pseudo_dir.  The orbital
+# parameters (r_cut, l_max, ecutjy) still have to be present in the orbgen config
+# — SIAB generates the primitive basis and the STRU/INPUT even when no LCAO child
+# will use them — but they cannot influence a PW total energy.
+#
+# `ks_solver: dav` is the PW default; the LCAO presets use `scalapack_gvx` (which
+# is meaningless for a PW basis).
+# ---------------------------------------------------------------------------
+pw:
+  basis: ["pw"]
+  parameters:
+    input:
+      ks_solver: dav
+    max_iterations: 4
