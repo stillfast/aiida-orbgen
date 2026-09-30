@@ -115,11 +115,13 @@ def _fake_upf(path, *, projectors=((0, 984), (1, 984)), dij=None, declare=None, 
 
 
 def test_upf_warning_for_a_projector_without_a_reference_state(tmp_path):
-    """The file that broke ABACUS's LCAO path had 6 projectors but 5 wavefunctions.
+    """The file that broke ABACUS's LCAO path lists its PP_BETA blocks as
+    ``l = 0,0,1,2,3,1``: that order is what mispaired the projectors with the radial
+    functions (see ``UPF-INVESTIGATION.md``), and the extra ``l=1`` channel without a
+    reference state is how such an order arises.  Both are reported.
 
-    The working `U.pbe-n-nc.14ve.UPF` has 5/5 and is fine even though two of its *s*
-    projectors share a cutoff radius, so the projector/wavefunction count is the signal
-    that separates them.
+    The working ``U.pbe-n-nc.14ve.UPF`` has 5 projectors for 5 wavefunctions and is
+    grouped, so it is clean even though two of its *s* projectors share a cutoff radius.
     """
     from aiida_orbgen.utils.upf import upf_warnings
 
