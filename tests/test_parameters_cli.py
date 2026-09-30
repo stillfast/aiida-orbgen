@@ -645,7 +645,7 @@ def test_final_orbital_rerun_and_idempotency(tmp_path, monkeypatch):
         orbgen_command=str(stub),
     )
     assert again["status"] == "already-present", again
-    assert "already up to date" in again["message"]
+    assert "already newer than the reference DFT" in again["message"]
 
     # ... unless a redo is requested
     redone = generate_final_orbital(
