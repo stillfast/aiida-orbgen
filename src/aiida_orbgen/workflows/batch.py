@@ -69,6 +69,7 @@ from aiida_orbgen.workflows.results import (
 )
 from aiida_orbgen.workflows.siab import (
     build_abacus_child_inputs,
+    siab_code_digest,
     n_atoms_from_stru,
     run_siab_pipeline,
 )
@@ -326,6 +327,9 @@ class OrbgenCalcWorkChain(WorkChain):
                 self.inputs.output_dir,
                 self.inputs.l_max,
                 self.inputs.r_cut,
+                # cache key: AiiDA would otherwise hand back a job list computed by an
+                # older checkout (see siab.siab_code_digest)
+                siab_code_digest(),
             )
         except Exception as exc:
             self.report(f"ERROR: SIAB pipeline failed: {exc}")

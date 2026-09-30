@@ -445,6 +445,42 @@ def test_the_workchain_hands_the_children_the_family_it_registered():
         "_effective_family_label", ast.dump(value)
 
 
+def test_the_siab_step_cache_key_follows_the_code():
+    """A cached `run_siab_pipeline` may not outlive the code that produced it.
+
+    AiiDA keys the cache on the inputs, so on 2026-09-30 a run picked up the job list
+    computed at 23:30 the evening before (five dimers, no monomer) although the monomer
+    mirroring had been added in between: the code and the daemon were correct, the
+    *result* was old.  `siab_code_digest()` is passed as an input for no other reason.
+    """
+    import inspect
+    import re
+
+    from aiida_orbgen.workflows.siab import run_siab_pipeline, siab_code_digest
+
+    digest = siab_code_digest()
+    assert re.fullmatch(r"[0-9a-f]{12}", digest), digest
+
+    func = getattr(run_siab_pipeline, "func", None) or getattr(
+        run_siab_pipeline, "__wrapped__", None
+    )
+    signature = inspect.signature(func) if func is not None else None
+    assert signature is not None and "code_version" in signature.parameters
+
+    # ... and the step has to pass it, or the cache key never changes
+    tree = ast.parse(BATCH.read_text(encoding="utf-8"))
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "run_siab_pipeline"
+    ]
+    assert calls, "the SIAB step is gone?"
+    assert any(
+        any(isinstance(arg, ast.Call) and getattr(arg.func, "id", "") == "siab_code_digest"
+            for arg in call.args)
+        for call in calls
+    ), "the SIAB step must pass siab_code_digest() so the cache key follows the code"
+
+
 def test_siab_facing_code_lives_in_one_module():
     """The WorkChain module must only orchestrate.
 

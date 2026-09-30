@@ -46,6 +46,7 @@ from abacuslite.io.generalio import read_stru
 
 __all__ = [
     "run_siab_pipeline",
+    "siab_code_digest",
     "build_abacus_child_inputs",
     "n_atoms_from_stru",
     "find_abacus_child",
@@ -54,12 +55,40 @@ __all__ = [
 ]
 
 
+def siab_code_digest() -> str:
+    """A short digest of the code that decides what :func:`run_siab_pipeline` returns.
+
+    AiiDA keys its cache on the *inputs*, so without this a ``run_siab_pipeline`` result
+    computed by an older checkout is handed back verbatim after the code changes.  That
+    is not hypothetical: on 2026-09-30 two runs of the same ``input.json`` got the job
+    list from 23:30 the previous evening (five dimers, no monomer, because the monomer
+    mirroring had just been added), so the workflow submitted the old set of children
+    and the spillage step failed on the missing monomer reference — while the code on
+    disk was correct and the daemon had been restarted.
+
+    Passing this as an input makes any change to those files invalidate the cache entry.
+    """
+    import hashlib
+    from pathlib import Path as _Path
+
+    interfaces = _Path(__file__).resolve().parent.parent / "interfaces"
+    digest = hashlib.sha256()
+    for name in ("pipeline.py", "nsw.py", "incar.py", "stru.py"):
+        path = interfaces / name
+        if path.is_file():
+            digest.update(name.encode())
+            digest.update(path.read_bytes())
+    digest.update(_Path(__file__).read_bytes())      # this module too
+    return digest.hexdigest()[:12]
+
+
 @calcfunction
 def run_siab_pipeline(
     siab_json: SinglefileData,
     output_dir: Str,
     lmax: Int,
     rcut: Float,
+    code_version: Str = None,
 ) -> dict:
     """Run ``generate_all_from_json`` on the worker and report the job list.
 
@@ -73,6 +102,10 @@ def run_siab_pipeline(
         highest angular momentum (overrides the orbgen JSON)
     rcut : Float
         cutoff radius in a.u. (overrides the orbgen JSON)
+    code_version : Str, optional
+        digest of the code that builds the job list (:func:`siab_code_digest`).  It is
+        only there to invalidate AiiDA's cache when that code changes; the value itself
+        is never read.
 
     Returns
     -------
