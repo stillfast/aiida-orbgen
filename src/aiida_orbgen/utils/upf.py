@@ -92,12 +92,28 @@ def upf_warnings(upf_path: str | Path) -> list[str]:
             f"(number_of_proj^2) — the nonlocal strengths are mis-paired"
         )
 
+    # The trigger itself: ABACUS's LCAO path assumes the PP_BETA blocks are grouped by
+    # angular momentum (`BetaRadials::build` stores them in file order while
+    # `RadialSet::indexing` maps (l, zeta) as if they were sorted by l), so an
+    # ungrouped file silently pairs labels with the wrong radial functions.
+    order = [projector["l"] for projector in projectors]
+    if order != sorted(order):
+        problems.append(
+            f"the PP_BETA blocks are not grouped by angular momentum (order {order}): "
+            f"ABACUS's LCAO path assumes they are, so it would use the wrong radial "
+            f"function for several (l, zeta) pairs — its total energy lands tens of eV "
+            f"away from the plane-wave one and can abort on a refined grid "
+            f"(2026-09-30).  The file itself is legal (QE reads it), and renumbering the "
+            f"blocks (permuting PP_DIJ the same way) is the same pseudopotential: "
+            f"`edit_upf.py <in.UPF> <out.UPF> --sort-by-l` in project/u_14ve/"
+        )
+
     # More projectors than atomic wavefunctions means at least one projector has no
     # reference state behind it — typically the `occ 0.00` state that ld1.x writes for
-    # an "extra" channel.  That is the shape of the file that broke ABACUS's LCAO path
-    # (l=1 duplicate with the same cutoff radius), while the working
-    # `U.pbe-n-nc.14ve.UPF` has exactly as many projectors as wavefunctions (5/5) and
-    # is fine even though its two s projectors share a cutoff radius.
+    # an "extra" channel.  That is how such a file gets an ungrouped order in the first
+    # place, while the working `U.pbe-n-nc.14ve.UPF` has exactly as many projectors as
+    # wavefunctions (5/5) and is fine even though its two s projectors share a cutoff
+    # radius.
     wfc = attrs.get("number_of_wfc")
     if wfc is not None and len(projectors) > int(wfc):
         duplicates = _duplicate_channels(projectors, min_l=1)

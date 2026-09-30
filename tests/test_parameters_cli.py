@@ -128,14 +128,20 @@ def test_upf_warning_for_a_projector_without_a_reference_state(tmp_path):
                      nwfc=3)
     assert upf_warnings(good) == []
 
-    # the new file's shape: an extra l=1 at the same cutoff, 5 chi
-    bad = _fake_upf(tmp_path / "bad.UPF", projectors=((0, 990), (1, 990), (1, 990)),
-                    nwfc=2)
+    # the new file's shape: an extra l=1 at the same cutoff, 5 chi, not grouped by l
+    bad = _fake_upf(tmp_path / "bad.UPF",
+                    projectors=((0, 990), (1, 990), (2, 990), (1, 991)), nwfc=3)
     warnings = upf_warnings(bad)
-    assert len(warnings) == 1
-    assert "3 projectors but only 2 atomic wavefunctions" in warnings[0]
-    assert "l=1 twice at cutoff index 990" in warnings[0]
-    assert "distinct cutoff radius" in warnings[0]
+    assert len(warnings) == 2
+    assert "not grouped by angular momentum (order [0, 1, 2, 1])" in warnings[0]
+    assert "--sort-by-l" in warnings[0]
+    assert "4 projectors but only 3 atomic wavefunctions" in warnings[1]
+    assert "l=1 twice" in warnings[1]
+
+    # grouping them by l (the same pseudopotential, renumbered) is clean
+    grouped = _fake_upf(tmp_path / "grouped.UPF",
+                        projectors=((0, 990), (1, 990), (1, 991)), nwfc=2)
+    assert not any("not grouped" in w for w in upf_warnings(grouped))
 
 
 def test_upf_warning_for_blocks_that_disagree_with_the_header(tmp_path):
