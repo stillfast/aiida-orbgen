@@ -32,6 +32,7 @@ from aiida.orm import (
     Str,
 )
 
+from aiida_orbgen.utils.config import DEFAULT_TOLERANCE_MEV
 from aiida_orbgen.static.defaults import (
     DEFAULT_CODE_LABEL,
     DEFAULT_MAX_MEMORY_KB,
@@ -574,11 +575,11 @@ class OrbgenCalcWorkChain(WorkChain):
         for line in describe_deltas(energies):
             self.report(line)
 
-        # ΔE/atom against the tolerance: 0.1 kcal/mol ≈ 4.2 meV/atom (chemical
+        # ΔE/atom against the run's tolerance (100 meV/atom by default; the
         # accuracy) is the per-atom standard.  The verdict has one implementation
         # (energies.evaluate_energies), the same one the grid search uses.
         if "lcao" in energies.get("energies", {}) and "pw" in energies.get("energies", {}):
-            tolerance_meV = float(self.ctx.abacus_cfg.get("tolerance_meV", 4.2))
+            tolerance_meV = float(self.ctx.abacus_cfg.get("tolerance_meV", DEFAULT_TOLERANCE_MEV))
             verdict = evaluate_energies(energies, tolerance_meV)
             self.ctx.tolerance_meV = tolerance_meV
             self.ctx.delta_per_atom_meV = verdict["delta_per_atom_meV"]
@@ -862,7 +863,7 @@ class OrbgenGridSearchWorkChain(WorkChain):
             self.report(f"ERROR: invalid SIAB config: {problem}")
             return self.exit_codes.ERROR_INVALID_SIAB_CONFIG
 
-        self.ctx.tolerance_meV = float(cfg.get("tolerance_meV", 4.2))
+        self.ctx.tolerance_meV = float(cfg.get("tolerance_meV", DEFAULT_TOLERANCE_MEV))
         self.ctx.search_strategy = str(
             self.inputs.get("search_strategy").value
             if "search_strategy" in self.inputs

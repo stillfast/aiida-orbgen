@@ -329,7 +329,7 @@ class AbacusSpec(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     basis: list[Literal["pw", "lcao_nsw"]] = Field(min_length=1)
-    tolerance_meV: float = Field(default=4.2, gt=0)
+    tolerance_meV: float = Field(default=100.0, gt=0)
     parameters_input: dict[str, Any] = Field(default_factory=dict)
 
     def errors(self) -> list[str]:

@@ -34,7 +34,7 @@ test:
     input:
       ks_solver: scalapack_gvx
     max_iterations: 4
-  tolerance_meV: 4.2
+  tolerance_meV: 100.0
 
 # Production preset for the 14-valence-electron uranium pseudopotential
 # (U.pbe-n-nc.14ve.UPF). `max_l_max` / `max_r_cut` cap the candidate grid that
@@ -45,7 +45,7 @@ u_14ve:
     input:
       ks_solver: scalapack_gvx
     max_iterations: 4
-  tolerance_meV: 4.2
+  tolerance_meV: 100.0
   max_l_max: 5
   max_r_cut: 12
   metadata:

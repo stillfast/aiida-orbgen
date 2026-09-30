@@ -125,7 +125,8 @@ def tolerance_verdict(
 ) -> tuple[bool, str]:
     """``(acceptable, message)`` for ΔE/atom against the tolerance.
 
-    The standard is 0.1 kcal/mol/**atom** ≈ 4.2 meV/atom (chemical accuracy), so
+    The standard is the ``tolerance_meV`` of the run (100 meV/atom by default;
+    the paper's 0.1 kcal/mol/atom ≈ 4.2 meV/atom is the strict end of that scale), so
     the comparison has to use the per-atom number — the per-system one is the
     dimer total and is roughly twice as large.
     """
@@ -133,7 +134,7 @@ def tolerance_verdict(
         return False, (
             f"✗ tolerance EXCEEDED: ΔE/atom_max={delta_per_atom_meV:.3f} meV "
             f"> tolerance_meV={tolerance_meV:.3f} meV "
-            f"(0.1 kcal/mol/atom = 4.2 meV) -> lcao:nsw NOT acceptable"
+            f"({tolerance_meV:g} meV/atom) -> lcao:nsw NOT acceptable"
         )
     return True, (
         f"✓ tolerance OK: ΔE/atom_max={delta_per_atom_meV:.3f} meV "

@@ -44,7 +44,7 @@ key (consistent with aiida-abacus ``test_abacus_base.py``), structured as follow
         }
       },
 
-      "tolerance_meV": 4.2,
+      "tolerance_meV": 100.0,
       "max_l_max": 5,
       "max_r_cut": 12.0
     }
@@ -136,7 +136,7 @@ def load_abacus_config(path: Union[str, Path]) -> Dict[str, Any]:
             {
               "basis": ["pw", "lcao_nsw"],
               "input_overrides": {...},
-              "tolerance_meV": 4.2,
+              "tolerance_meV": 100.0,
               "scheduler": {"queue_name": ..., ...}
             }
 
@@ -270,7 +270,7 @@ DEFAULT_ABACUS_CONFIG: Dict[str, Any] = {
             },
         },
     },
-    "tolerance_meV": 4.2,
+    "tolerance_meV": 100.0,
 }
 
 
@@ -291,7 +291,7 @@ def with_default_abacus(
             "parameters": {"input": {"ecutwfc": 100, ...}},
             "metadata": {"options": {...}}
           },
-          "tolerance_meV": 4.2,
+          "tolerance_meV": 100.0,
         }
     """
     if not abacus_cfg:

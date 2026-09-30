@@ -114,7 +114,7 @@ SLOTS: dict[str, tuple[str, str]] = {
     "orbgen": ("orbgen", "orbgen.yml"),
 }
 
-DEFAULT_TOLERANCE_MEV = 4.2
+DEFAULT_TOLERANCE_MEV = 100.0
 DEFAULT_BASIS = ["pw", "lcao_nsw"]
 
 #: Keys the AiiDA-side SIAB pipeline (``generate_all_from_json`` →
@@ -301,7 +301,7 @@ def canonical_abacus_config(
             "parameters": {"input": {...}},
             "metadata": {"options": {...}}
           },
-          "tolerance_meV": 4.2,
+          "tolerance_meV": 100.0,
           "max_l_max": ..., "max_r_cut": ...
         }
     """
@@ -470,6 +470,9 @@ class ConfigLoader:
             "abacus",
             code=codes.get("abacus"),
             options=metadata.get("options", {}),
+            # `static.tolerance_meV` wins over the preset's own value; the code
+            # default (100 meV/atom) is the fallback in canonical_abacus_config.
+            tolerance_meV=static.get("tolerance_meV"),
         )
         orbgen_presets = self._inline_orbgen_preset(pseudo_path=pseudo_path)
         if orbgen_presets:

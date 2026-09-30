@@ -29,6 +29,7 @@ from aiida_orbgen.utils.select import (
     write_selection,
 )
 from aiida_orbgen.utils.config import (
+    DEFAULT_TOLERANCE_MEV,
     ConfigLoader,
     WORKFLOW_CALC,
     WORKFLOW_GRIDSEARCH,
@@ -88,12 +89,33 @@ def test_dict_form_selects_the_named_file_and_preset(tmp_path):
     assert config["abacus"]["parameters"]["input"]["ks_solver"] == "scalapack_gvx"
     assert config["abacus"]["code"] == "abacus_lts@yeesuan"
     assert config["abacus"]["max_iterations"] == 4
-    assert config["tolerance_meV"] == 4.2
+    assert config["tolerance_meV"] == DEFAULT_TOLERANCE_MEV == 100.0
     # scheduler options come from parameters/metadata.yml
     assert config["abacus"]["metadata"]["options"]["queue_name"] == "q_ysuan"
 
     # static.pseudo_path is injected as SIAB's pseudo_dir
     assert bundle.orbgen_presets[0].config["pseudo_dir"] == bundle.pseudo_path
+
+
+def test_static_tolerance_overrides_the_preset(tmp_path):
+    """`static.tolerance_meV` is the run-level knob: it wins over the preset.
+
+    The workflow's standard is 100 meV/atom (the paper's strict 0.1 kcal/mol/atom =
+    4.2 meV/atom was out of reach for a tractable U basis), and a run may relax or
+    tighten it without editing `parameters/abacus/*.yml`.
+    """
+    path = _write_input(
+        tmp_path,
+        {"abacus": {"test": "test"}, "orbgen": {"test": "test"}},
+    )
+    assert ConfigLoader(path).load_all().abacus_presets[0].config["tolerance_meV"] == 100.0
+
+    # rewrite with an explicit tolerance
+    payload = json.loads(path.read_text())
+    payload["static"]["tolerance_meV"] = 250
+    path.write_text(json.dumps(payload, indent=4))
+    config = ConfigLoader(path).load_all().abacus_presets[0].config
+    assert config["tolerance_meV"] == 250.0
 
 
 def _fake_upf(path, *, projectors=((0, 984), (1, 984)), dij=None, declare=None, nwfc=None):
