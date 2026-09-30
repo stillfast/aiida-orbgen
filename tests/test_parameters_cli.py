@@ -130,7 +130,7 @@ def test_upf_warning_for_a_projector_without_a_reference_state(tmp_path):
 
     # the new file's shape: an extra l=1 at the same cutoff, 5 chi, not grouped by l
     bad = _fake_upf(tmp_path / "bad.UPF",
-                    projectors=((0, 990), (1, 990), (2, 990), (1, 991)), nwfc=3)
+                    projectors=((0, 990), (1, 990), (2, 990), (1, 990)), nwfc=3)
     warnings = upf_warnings(bad)
     assert len(warnings) == 2
     assert "not grouped by angular momentum (order [0, 1, 2, 1])" in warnings[0]
