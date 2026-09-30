@@ -1499,6 +1499,41 @@ def test_report_does_not_flag_a_normal_basis_error():
     assert "E_lcao_nsw < E_pw" not in text
 
 
+def test_a_reference_tree_older_than_the_run_is_reported(tmp_path):
+    """`static.dft_root` pointing at an old tree makes SIAB fit the wrong data.
+
+    2026-09-30: `static.dft_root` was `project/u_14ve/`, where the trees of the
+    *previous* attempt lived (broken pseudopotential, `E_lcao` 69 eV off); the report
+    fitted those silently and SIAB additionally ran the missing monomer DFT itself.
+    """
+    import os
+    from datetime import datetime, timedelta
+
+    from aiida_orbgen.utils.report.orbitals import _reference_trees_older_than
+
+    old_out = tmp_path / "U-dimer-2.75-9au" / "OUT.ABACUS"
+    old_out.mkdir(parents=True)
+    log = old_out / "running_scf.log"
+    log.write_text("...")
+    old_time = datetime(2026, 9, 30, 0, 17).timestamp()
+    os.utime(log, (old_time, old_time))
+
+    class Node:
+        ctime = datetime(2026, 9, 30, 8, 5)
+
+    message = _reference_trees_older_than(tmp_path, Node())
+    assert message and "2026-09-30 00:17" in message and "2026-09-30 08:05" in message
+    assert "cannot belong to it" in message
+
+    # a tree written after the run started is fine
+    fresh = datetime(2026, 9, 30, 8, 30).timestamp()
+    os.utime(log, (fresh, fresh))
+    assert _reference_trees_older_than(tmp_path, Node()) is None
+
+    # and an empty root is not a finding either
+    assert _reference_trees_older_than(tmp_path / "nothing", Node()) is None
+
+
 def test_report_prefers_the_family_the_children_used():
     """siab_info carries the name SIAB implies; the output carries the real one."""
     from aiida_orbgen.utils.report.orbgen import _collect_grid_point

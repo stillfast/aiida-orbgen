@@ -19,6 +19,8 @@ Two independent jobs live here:
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import json
 import shlex
 import time
@@ -579,6 +581,41 @@ def _point_is_covered(root: Path, point) -> bool:
     return ready
 
 
+def _reference_trees_older_than(root: str | Path, calc_node) -> str | None:
+    """Say so when the newest reference output under *root* predates this run.
+
+    A tree that predates the calculation cannot be its reference — it belongs to an
+    earlier run, possibly with another pseudopotential or another r_cut.  SIAB cannot
+    tell, and silently optimises against it (2026-09-30).
+    """
+    try:
+        created = calc_node.ctime.timestamp()
+    except Exception:  # noqa: BLE001
+        return None
+
+    newest, newest_out = 0.0, None
+    for out in sorted(Path(root).glob("*/OUT.*")):
+        try:
+            if out.is_dir():
+                stamps = [path.stat().st_mtime for path in out.rglob("*") if path.is_file()]
+                mtime = max(stamps) if stamps else out.stat().st_mtime
+            else:
+                mtime = out.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > newest:
+            newest, newest_out = mtime, out
+
+    if newest_out is None or newest >= created - 60:
+        return None
+    return (
+        f"the newest reference output there ({newest_out.name} of "
+        f"{newest_out.parent.name}) is from "
+        f"{datetime.fromtimestamp(newest):%Y-%m-%d %H:%M}, before this run "
+        f"({calc_node.ctime:%Y-%m-%d %H:%M}), so it cannot belong to it"
+    )
+
+
 def resolve_dft_root(
     point,
     candidate: str | Path | None,
@@ -753,13 +790,33 @@ def generate_final_orbital(
     from aiida import orm
 
     calc_node = orm.load_node(point.pk)
+    notices: list[str] = []
+
+    # A DFT root that is not the run's own output_dir almost always means the caller
+    # pointed at a tree prepared earlier — and STAB has no way to tell the difference:
+    # it optimises against whatever sits there, and the fit runs (slowly) on data from
+    # another run or another pseudopotential.  Seen on 2026-09-30: `static.dft_root`
+    # pointed at `project/u_14ve/`, where the trees of the *previous* attempt lived
+    # (computed with the broken UPF, E_lcao 69 eV off), so the report fitted those and
+    # SIAB additionally ran the missing monomer DFT on the login node.
+    own_dir = None
+    try:
+        own_dir = point.output_dir or None
+    except Exception:  # noqa: BLE001
+        own_dir = None
+    if own_dir and Path(str(own_dir)).expanduser().resolve() != Path(root).resolve():
+        stale = _reference_trees_older_than(root, calc_node)
+        notices.append(
+            f"reference DFT taken from {root_source} ({root}), not from this run's "
+            f"output_dir ({own_dir})"
+            + (f"; {stale}" if stale else "")
+        )
 
     # ---- 3. SIAB config ---------------------------------------------------
     # An explicit ``--siab-json`` short-circuits everything else: reading the
     # copy stored on the node needs the AiiDA repository (an object store that
     # may be unavailable, e.g. read-only mounts), and there is no reason for
     # that to abort a run whose config the caller just supplied.
-    notices: list[str] = []
     if siab_config is not None:
         try:
             with open(siab_config, "r", encoding="utf-8") as handle:
