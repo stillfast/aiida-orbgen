@@ -1031,9 +1031,9 @@ def generate_final_orbital(
                 result["validation_failed"] = summary_info.pop("message", "")
             result.update(summary_info)
             result["message"] = (
-                f"{len(work_outputs)} orbital file(s) already up to date "
-                f"(older than the reference DFT) — pass --redo-final-orbital to "
-                f"recompute"
+                f"{len(work_outputs)} orbital file(s) are already newer than the "
+                f"reference DFT they were fitted from, so they were kept — pass "
+                f"--redo-final-orbital to recompute them anyway"
             )
             return result
 
