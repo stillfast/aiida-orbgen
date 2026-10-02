@@ -1,0 +1,24 @@
+# ---------------------------------------------------------------------------
+# parameters/abacus/lcao_only.yml
+#
+# LCAO-only preset: submits no PW child at all.
+#
+# Why it exists: the reference-PW comparison (`basis: [pw, lcao_nsw]`) is what
+# defines `dE = E_lcao - E_pw`, but once a basis is being *reduced* the quantity
+# that matters is how the LCAO energies move as (r_cut, l_max, ecutjy) change --
+# exactly the same physics as before, without paying for the PW children.  With
+# `basis: [lcao_nsw]` each grid point costs one LCAO SCF per geometry (plus the
+# automatic monomer job), and the per-geometry total energies in the `energies`
+# output can be differenced between points.
+#
+# `tolerance_meV` is left at the 100 meV/atom standard; with no PW child there is
+# nothing to compare against, so the workchain reports exit code 304 -- that is
+# expected and harmless for this mode.
+# ---------------------------------------------------------------------------
+lcao:
+  basis: [lcao_nsw]
+  parameters:
+    input:
+      ks_solver: genelpa
+    max_iterations: 4
+  tolerance_meV: 100.0
