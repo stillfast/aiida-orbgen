@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# parameters/scan/u_14ve.yml
+#
+# The two ladders of the U project (project/u_14ve), with the reference point in
+# parameters/orbgen/u_14ve.yml#ref_r12_l4_j150 (r_cut 12 au, l_max 4, ecutjy 150 Ry).
+#
+#   ecutwfc_ladder   orbgen.ecutwfc -- how converged is the plane-wave reference?
+#                    Same geometries, five cutoffs; `with_lcao` adds one LCAO child
+#                    per geometry at the reference cutoff, which is the basis-quality
+#                    number (the .orb itself never changes: ecutwfc is not in its name).
+#   basis_ladder     orbgen.basis -- how cheap can the basis be?  One super-parameter
+#                    at a time downwards from the reference point: ecutjy (the dominant
+#                    knob) -> l_max -> r_cut, cheapest candidate first, stop at the first
+#                    one inside 100 meV/atom (`static.tolerance_meV` overrides that).
+#                    `atomization_tolerance_meV` adds the stricter, defect-like
+#                    criterion: |d(atomization energy)| against the reference point.
+#                    `pw_reference_pk` (in input.json, once the cutoff ladder has run)
+#                    removes the PW children entirely.
+# ---------------------------------------------------------------------------
+
+ecutwfc_ladder:
+  ecutwfc_values: [100, 120, 150, 180, 200]
+  with_lcao: true
+
+basis_ladder:
+  reference_ecutjy: 150
+  ecutjy_values: [125, 100]
+  l_max_values: [3]
+  r_cut_values: [11, 10]
+  ecutwfc: 180
+  strategy: ladder
+  by: seconds
+  stop_on_first_pass: true
+  atomization_tolerance_meV: 50
+
+# The same ladder without any reduction: measures the reference point itself
+# (dE/atom of the basis that everything else is compared against).
+basis_reference_only:
+  reference_ecutjy: 150
+  ecutwfc: 180
+  by: seconds

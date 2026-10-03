@@ -34,6 +34,8 @@ from aiida_orbgen.utils.config import (
     scan_families,
 )
 
+REPO = Path(__file__).resolve().parent.parent
+
 ECUTWFC_SCAN = {"ecutwfc_values": [100, 120, 150, 180, 200], "with_lcao": True}
 BASIS_SCAN = {
     "reference_ecutjy": 150.0,
@@ -101,6 +103,106 @@ def test_the_allowed_keys_are_documented_in_the_error():
     with pytest.raises(KeyError) as excinfo:
         canonical_scan_config({"r_cut": 11})
     assert "r_cut_values" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+#  the scan preset slot: one level of the parameters/ tree
+# ---------------------------------------------------------------------------
+def test_a_scan_can_be_named_instead_of_spelled_out(tmp_path):
+    """`parameters.scan` holds the whole ladder, so input.json only names it."""
+    path = _write_input(tmp_path, presets={
+        "abacus": {"lcao_only": "lcao"},
+        "orbgen": {"u_14ve": "ref_r12_l4_j150"},
+        "scan": {"u_14ve": "basis_ladder"},
+    })
+    bundle = ConfigLoader(path).load_all()
+    assert bundle.workflow == WORKFLOW_BASIS          # from the preset's keys
+    assert bundle.scan["ecutjy_values"] == [125.0, 100.0]
+    assert bundle.scan["l_max_values"] == [3]
+    assert bundle.scan["r_cut_values"] == [11.0, 10.0]
+    assert bundle.scan["atomization_tolerance_meV"] == 50
+    assert bundle.candidates() == [(4, 12.0)]        # the reference point
+
+
+def test_the_two_presets_of_one_scan_pair_with_the_same_reference(tmp_path):
+    """`orbgen/u_14ve.yml#ref_r12_l4_j150` serves both scans."""
+    for preset, workflow in (("ecutwfc_ladder", WORKFLOW_ECUTWFC),
+                             ("basis_ladder", WORKFLOW_BASIS)):
+        path = _write_input(tmp_path, presets={
+            "abacus": {"lcao_only": "lcao"},
+            "orbgen": {"u_14ve": "ref_r12_l4_j150"},
+            "scan": {"u_14ve": preset},
+        })
+        bundle = ConfigLoader(path).load_all()
+        assert bundle.workflow == workflow, preset
+        # one candidate, so `plan_runs` accepts it as the reference point
+        assert bundle.candidates() == [(4, 12.0)]
+
+
+def test_the_production_preset_is_the_basis_the_ladders_chose(tmp_path):
+    path = _write_input(tmp_path, presets={
+        "abacus": {"lcao_only": "lcao"},
+        "orbgen": {"u_14ve": "prod_r11_l4_j125"},
+    })
+    bundle = ConfigLoader(path).load_all()
+    assert bundle.workflow == WORKFLOW_CALC
+    assert bundle.candidates() == [(4, 11.0)]
+    assert bundle.orbgen_presets[0].config["ecutjy"] == 125
+
+
+def test_the_scan_slot_accepts_the_same_three_spellings(tmp_path):
+    for spec in ({"scan": "pw_cutoff_quick"},
+                 {"scan": ["pw_cutoff_quick"]},
+                 {"scan": {"scan": "pw_cutoff_quick"}}):
+        path = _write_input(tmp_path, presets={"abacus": {"lcao_only": "lcao"},
+                                               "orbgen": "u_14ve", **spec},
+                            single_point=False)
+        bundle = ConfigLoader(path).load_all()
+        assert bundle.workflow == WORKFLOW_ECUTWFC, spec
+        assert bundle.scan["ecutwfc_values"] == [100.0, 150.0, 200.0]
+
+
+def test_the_inline_section_overrides_the_preset_key_by_key(tmp_path):
+    """A project keeps its ladders in the preset tree and varies one key per run."""
+    path = _write_input(tmp_path, presets={
+        "abacus": {"lcao_only": "lcao"},
+        "orbgen": {"u_14ve": "ref_r12_l4_j150"},
+        "scan": {"u_14ve": "basis_ladder"},
+    })
+    payload = json.loads(path.read_text())
+    payload["scan"] = {"by": "nchi", "ecutjy_values": [125]}
+    path.write_text(json.dumps(payload))
+    bundle = ConfigLoader(path).load_all()
+    assert bundle.scan["by"] == "nchi"                # inline wins
+    assert bundle.scan["ecutjy_values"] == [125.0]    # inline wins
+    assert bundle.scan["r_cut_values"] == [11.0, 10.0]  # from the preset
+    assert any("overrides" in w for w in bundle.warnings)
+
+
+def test_an_unknown_scan_preset_lists_what_exists(tmp_path):
+    path = _write_input(tmp_path, presets={"abacus": {"lcao_only": "lcao"},
+                                           "orbgen": "u_14ve",
+                                           "scan": {"u_14ve": "nope"}})
+    with pytest.raises(KeyError, match="basis_ladder"):
+        ConfigLoader(path).load_all()
+
+
+def test_two_scan_presets_may_not_set_the_same_key(tmp_path):
+    path = _write_input(tmp_path, presets={
+        "abacus": {"lcao_only": "lcao"}, "orbgen": "u_14ve",
+        "scan": {"scan": ["pw_cutoff_standard", "pw_cutoff_with_basis_check"]},
+    }, single_point=False)
+    with pytest.raises(KeyError, match="overlap"):
+        ConfigLoader(path).load_all()
+
+
+def test_a_scan_preset_is_validated_like_the_inline_section(tmp_path):
+    """The scan slot gets the same schema check, so a typo fails in `check`."""
+    scan_file = (REPO / "src" / "aiida_orbgen" / "parameters" / "scan" / "u_14ve.yml")
+    assert scan_file.is_file()
+    assert "nope" not in scan_file.read_text()
+    with pytest.raises(KeyError, match="unknown key"):
+        canonical_scan_config({"ecutwfc_value": [100]})     # singular typo
 
 
 # ---------------------------------------------------------------------------

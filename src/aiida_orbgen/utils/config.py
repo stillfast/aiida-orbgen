@@ -24,7 +24,7 @@ Layout of ``input.json``
     }
 
 ``parameters``
-    One slot per preset family. Two slots exist:
+    One slot per *level*, so a run is composed instead of written out:
 
     * ``abacus`` → ``parameters/abacus/<category>.yml`` — ABACUS / scheduler
       presets (canonicalised into the ``abacus.json`` shape the workchains
@@ -32,13 +32,21 @@ Layout of ``input.json``
       ``abacus.metadata.options`` / ``tolerance_meV``).
     * ``orbgen`` → ``parameters/orbgen/<category>.yml`` — SIAB (CSW-NAO)
       presets, i.e. the ``orbgen.json`` content (element / geoms / orbitals /
-      bessel_nao_rcut / ...).
+      bessel_nao_rcut / ecutjy / ...).  For a value-selection scan this preset is
+      the **reference point** the ladder reduces from.
+    * ``scan`` → ``parameters/scan/<category>.yml`` — the ladder and the criterion
+      of a scan.  A scan preset *is* the ``input.json["scan"]`` section under a
+      name; an inline section is merged over it (inline wins), so a single value can
+      be varied for one run without writing a new preset.
 
     Each slot accepts three spellings::
 
         "abacus": "u_14ve"                     # parameters/abacus/abacus.yml
         "abacus": ["test", "u_14ve"]           # same file, two presets
         "abacus": {"test": "test"}             # parameters/abacus/test.yml
+
+    The same three spellings apply to every slot, e.g.
+    ``"scan": {"u_14ve": "basis_ladder"}`` for ``parameters/scan/u_14ve.yml``.
 
     The dict form is what the reference ``input.json`` uses: the key is the
     *file* (category) and the value is the preset name inside it.
@@ -78,9 +86,10 @@ being silently mixed).
     (:data:`SCAN_KEYS`), otherwise the candidate grid does (one candidate →
     ``orbgen.calc``, more than one → ``orbgen.gridsearch``).
 ``scan``
-    Optional, and the only place the parameters of a scan live — the workflows
-    themselves are generic. Its keys are listed in :data:`SCAN_KEYS`; every one of
-    them is validated here, so a mistyped ladder fails in ``check`` instead of
+    Optional.  Normally it is not written out at all but *named* through the ``scan``
+    preset slot (``parameters/scan/<category>.yml``); whatever is written here is
+    merged over that preset, key by key.  Its keys are listed in :data:`SCAN_KEYS` and
+    every one of them is validated, so a mistyped ladder fails in ``check`` instead of
     submitting a different scan:
 
     .. code-block:: json
@@ -157,10 +166,13 @@ SUPPORTED_WORKFLOWS = (
 #: orbital flat, so ``report`` refuses them.
 SCAN_WORKFLOWS = (WORKFLOW_ECUTWFC, WORKFLOW_BASIS)
 
-#: slot -> (sub-directory, default preset file inside it)
+#: slot -> (sub-directory, default preset file inside it).  One slot per level:
+#: which DFT to run (``abacus``), which reference basis and geometries to fit
+#: (``orbgen``), and which ladder/criterion a value-selection scan follows (``scan``).
 SLOTS: dict[str, tuple[str, str]] = {
     "abacus": ("abacus", "abacus.yml"),
     "orbgen": ("orbgen", "orbgen.yml"),
+    "scan": ("scan", "scan.yml"),
 }
 
 DEFAULT_TOLERANCE_MEV = 100.0
@@ -678,10 +690,8 @@ class ConfigLoader:
             )
 
         output_root = static.get("output_dir")
-        scan = canonical_scan_config(
-            self.input_params.get("scan"),
-            source=f"{self.input_json_path}#scan",
-        )
+        scan = self._resolve_scan()
+
         workflow, explicit = self._resolve_workflow(abacus_presets, orbgen_presets, scan)
 
         return ParamBundle(
@@ -799,6 +809,38 @@ class ConfigLoader:
             slot="orbgen", name=str(name).strip(), config=config, source=source
         )]
 
+    def _resolve_scan(self) -> dict:
+        """The ``scan`` section: the preset(s) of the ``scan`` slot, plus the inline one.
+
+        A scan preset holds the ladder and the criterion of one scan (e.g.
+        ``parameters/scan/u_14ve.yml#basis_ladder``); ``input.json["scan"]`` then only has
+        to say *what to change for this run* — the two are merged with the inline keys
+        winning, so a project can keep its ladders in the preset tree and still vary one
+        value (``{"by": "nchi"}``) without a new preset.
+        """
+        scan = {}
+        for entry in self._load_slot("scan"):
+            clash = sorted(set(scan) & set(entry.config))
+            if clash:
+                raise KeyError(
+                    f"scan presets {clash} overlap: {entry.source} sets keys another "
+                    f"selected preset already set ({clash})"
+                )
+            scan.update(entry.config)
+        inline = canonical_scan_config(
+            self.input_params.get("scan"), source=f"{self.input_json_path}#scan"
+        )
+        if inline and scan:
+            note = (
+                f"{self.input_json_path}#scan overrides "
+                f"{sorted(set(inline) & set(scan))} of the scan preset"
+                if set(inline) & set(scan) else None
+            )
+            if note:
+                self._warnings.append(note)
+        scan.update(inline)
+        return scan
+
     def _load_slot(self, slot: str, **canonical_kwargs) -> list[PresetEntry]:
         """Resolve one ``parameters[<slot>]`` entry into a list of presets."""
         parameters = self.input_params["parameters"]
@@ -874,6 +916,9 @@ class ConfigLoader:
                 self._warnings.extend(
                     validate_abacus_input(config, source=f"{source}#{name}")
                 )
+            elif slot == "scan":
+                # a scan preset *is* the `scan` section: same schema, same validation
+                config = canonical_scan_config(raw, source=f"{source}#{name}")
             else:
                 config = canonical_orbgen_config(raw, **canonical_kwargs)
                 self._warnings.extend(

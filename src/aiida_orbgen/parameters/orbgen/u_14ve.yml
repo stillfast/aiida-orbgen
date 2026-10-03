@@ -1,0 +1,119 @@
+# ---------------------------------------------------------------------------
+# parameters/orbgen/u_14ve.yml
+#
+# SIAB (CSW-NAO) presets for the U project built with the new norm-conserving
+# pseudopotential (project/u_14ve/U.pbe-n-nc.UPF), split by *role*:
+#
+#   ref_r12_l4_j150    the reference point of both value-selection scans: one
+#                      (l_max, r_cut) candidate, at the ecutjy that names the
+#                      primitive basis (`U_gga_12au_150Ry_45s45p44d44f43g.orb`).
+#                      `orbgen.ecutwfc` walks the plane-wave cutoff with it and
+#                      `orbgen.basis` reduces r_cut / l_max / ecutjy from it.
+#   prod_r11_l4_j125   the basis the ladders settled on (r_cut 11 au, l_max 4,
+#                      ecutjy 125 Ry -> `U_gga_11au_125Ry_38s37p37d36f36g.orb`),
+#                      for the production `orbgen.calc` + `report` runs.
+#
+# One reference preset serves both scans: the geometries, the pseudopotential and
+# the fit settings are the same, and the ladder varies l_max / r_cut / ecutjy
+# internally.  It is selected from input.json:
+#
+#   "parameters": {"orbgen": {"u_14ve": "ref_r12_l4_j150"}}
+#
+# `pseudo_dir` here is only a fallback: input.json's `static.pseudo_path` wins.
+#
+# Two cutoffs, easily confused:
+#   * `ecutwfc` (Ry)  plane-wave cutoff of the reference DFT -- it lives in the
+#                     ABACUS INPUT and appears in no file name;
+#   * `ecutjy`  (Ry)  JY (spherical-wave) fitting cutoff of the primitive basis.
+#                     Together with r_cut it fixes the primitive set, and it is the
+#                     number in the orbital name:
+#                       compute_nbes_per_l(12, 150, 4) -> [45, 45, 44, 44, 43]
+#                       compute_nbes_per_l(11, 125, 4) -> [38, 37, 37, 36, 36]
+# ---------------------------------------------------------------------------
+
+# Reference point of both scans: r_cut 12 au, l_max 4, ecutjy 150 Ry.
+ref_r12_l4_j150:
+  element: "U"
+  pseudo_dir: "/home/liguozhou/abacus/calculations/orbgen/project/u_14ve/U.pbe-n-nc.UPF"
+
+  fit_basis: "jy"
+  ecutwfc: 180            # reference DFT: plane-wave cutoff (ABACUS INPUT only)
+  ecutjy: 150             # primitive basis: JY cutoff (`_150Ry_` in the orbital name)
+  bessel_nao_rcut: [12.0]
+  primitive_type: "reduced"
+
+  geoms:
+    - proto: "dimer"
+      pertkind: "stretch"
+      pertmags: [2.1, 2.4, 2.8]   # U-U distances, Angstrom (SIAB adds the monomer)
+      nbands: 40
+      nspin: 1
+      lmaxmax: 4
+      celldm: 35                  # cubic cell in Bohr (= 18.52 A; half edge 17.5 au)
+
+  orbitals:
+    - nzeta: [4, 3, 2, 2, 1]
+      geoms: [0]
+      nbands: "occ"
+      checkpoint: null
+
+  spill_guess: "atomic"     # also makes SIAB generate the monomer job
+  optimizer: "scipy.bfgs"
+  max_steps: 10000
+  torch.lr: 0.001
+  nthreads_rcut: 4
+  device: "cpu"
+
+  smearing_method: "gauss"
+  smearing_sigma: "0.02"
+  mixing_type: "broyden"
+  mixing_beta: 0.4
+  mixing_ndim: 12
+
+  # Only used by SIAB itself (its own DFT runner and the final orbital step).
+  abacus_command: "abacus"
+  environment: "ulimit -l unlimited 2>/dev/null; export PATH=/home/liguozhou/install/miniconda3/envs/orbgen/bin:$PATH; export LD_LIBRARY_PATH=/home/liguozhou/install/miniconda3/envs/orbgen/lib:$LD_LIBRARY_PATH; export UCX_TLS=tcp,self,sm; export OMP_NUM_THREADS=1"
+  mpi_command: "mpirun -np 24 --bind-to numa"
+
+# The basis the ladders settled on: r_cut 11 au, l_max 4, ecutjy 125 Ry.
+prod_r11_l4_j125:
+  element: "U"
+  pseudo_dir: "/home/liguozhou/abacus/calculations/orbgen/project/u_14ve/U.pbe-n-nc.UPF"
+
+  fit_basis: "jy"
+  ecutwfc: 180
+  ecutjy: 125
+  bessel_nao_rcut: [11.0]
+  primitive_type: "reduced"
+
+  geoms:
+    - proto: "dimer"
+      pertkind: "stretch"
+      pertmags: [2.1, 2.4, 2.8]
+      nbands: 40
+      nspin: 1
+      lmaxmax: 4
+      celldm: 35
+
+  orbitals:
+    - nzeta: [4, 3, 2, 2, 1]
+      geoms: [0]
+      nbands: "occ"
+      checkpoint: null
+
+  spill_guess: "atomic"
+  optimizer: "scipy.bfgs"
+  max_steps: 10000
+  torch.lr: 0.001
+  nthreads_rcut: 4
+  device: "cpu"
+
+  smearing_method: "gauss"
+  smearing_sigma: "0.02"
+  mixing_type: "broyden"
+  mixing_beta: 0.4
+  mixing_ndim: 12
+
+  abacus_command: "abacus"
+  environment: "ulimit -l unlimited 2>/dev/null; export PATH=/home/liguozhou/install/miniconda3/envs/orbgen/bin:$PATH; export LD_LIBRARY_PATH=/home/liguozhou/install/miniconda3/envs/orbgen/lib:$LD_LIBRARY_PATH; export UCX_TLS=tcp,self,sm; export OMP_NUM_THREADS=1"
+  mpi_command: "mpirun -np 24 --bind-to numa"

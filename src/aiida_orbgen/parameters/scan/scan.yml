@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# parameters/scan/scan.yml
+#
+# `scan` presets: the ladder and the criterion of one value-selection scan, i.e.
+# the `input.json["scan"]` section under a name.  The keys and their meaning are
+# listed in `aiida_orbgen.utils.config.SCAN_KEYS`; the keys present decide the
+# workflow (`ecutwfc_values` -> orbgen.ecutwfc, a ladder of ecutjy / l_max / r_cut
+# -> orbgen.basis), and `input.json["scan"]` is merged *over* the preset, so one
+# value can be varied for a single run without writing a new preset:
+#
+#   "parameters": {"scan": {"scan": "pw_cutoff_standard"}},
+#   "scan": {"with_lcao": true}
+#
+# The ladders that belong to a particular element/project live next to it, see
+# parameters/scan/u_14ve.yml.
+# ---------------------------------------------------------------------------
+
+# The paper's scale: is the reference DFT converged at the standard E_c?
+pw_cutoff_standard:
+  ecutwfc_values: [100, 120, 150, 180, 200]
+
+# A three-point version for smoke runs and for machines where PW is expensive.
+pw_cutoff_quick:
+  ecutwfc_values: [100, 150, 200]
+
+# Cutoff ladder *plus* one LCAO child per geometry at the reference cutoff: shows
+# how far the basis of that run is from the converged plane-wave limit.
+pw_cutoff_with_basis_check:
+  ecutwfc_values: [100, 120, 150, 180, 200]
+  with_lcao: true
+
+# Reduce one super-parameter at a time from the reference point, cheapest candidate
+# first, stopping at the first one inside `tolerance_meV`.  The values themselves
+# are project-specific -- this one only fixes the *strategy*, and an input.json can
+# add the ladder to it:
+#
+#   "parameters": {"scan": {"scan": "basis_reduce_one_step"}},
+#   "scan": {"ecutjy_values": [125, 100], "r_cut_values": [11, 10]}
+basis_reduce_one_step:
+  strategy: ladder
+  by: seconds
+  stop_on_first_pass: true

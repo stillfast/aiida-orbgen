@@ -35,14 +35,42 @@ The CLI is driven by an `input.json` plus the preset tree in
 `src/aiida_orbgen/parameters/` (the same idea as `aiida-uranium-workflow`):
 
 ```
-parameters/
-├── metadata.yml          # scheduler-options presets       (static.metadata)
-├── abacus/
-│   ├── abacus.yml        # default preset file of the "abacus" slot
-│   └── test.yml          # parameters.abacus = {"test": "test"}
-└── orbgen/
-    ├── orbgen.yml        # default preset file of the "orbgen" slot (SIAB config)
-    └── test.yml          # parameters.orbgen = {"test": "test"}
+parameters/                       # one slot per level, composed by input.json
+├── metadata.yml          # scheduler options                (static.metadata)
+├── abacus/               # level 1: which DFT to run       (parameters.abacus)
+│   ├── abacus.yml        #   default preset file of the slot
+│   ├── lcao_only.yml     #   LCAO-only (the scans use this)
+│   ├── pw.yml            #   PW-only (the cutoff ladder would use this alone)
+│   └── test.yml
+├── orbgen/               # level 2: reference basis + geometries (parameters.orbgen)
+│   ├── orbgen.yml        #   default preset file of the slot (SIAB config)
+│   ├── u_14ve.yml        #   U project: ref_r12_l4_j150, prod_r11_l4_j125
+│   └── test.yml
+└── scan/                 # level 3: ladder + criterion       (parameters.scan)
+    ├── scan.yml          #   generic ladders (pw_cutoff_*, basis_reduce_one_step)
+    └── u_14ve.yml        #   U project: ecutwfc_ladder, basis_ladder
+```
+
+A value-selection run therefore names three presets instead of writing anything
+out; `input.json["scan"]` (optional) then overrides single keys of the scan preset
+for that one run:
+
+```json
+{
+    "parameters": {
+        "abacus": {"lcao_only": "lcao"},
+        "orbgen": {"u_14ve": "ref_r12_l4_j150"},
+        "scan":   {"u_14ve": "basis_ladder"}
+    },
+    "static": {
+        "pseudo_path": "/abs/path/U.pbe-n-nc.UPF",
+        "metadata": "yeesuan_bigmem",
+        "tolerance_meV": 40
+    },
+    "profile": "aiida_profile",
+    "code": {"abacus": "abacus_lts@yeesuan"},
+    "scan": {"by": "nchi"}
+}
 ```
 
 `examples/input.json`:
@@ -63,7 +91,8 @@ parameters/
 ```
 
 Each slot accepts `"preset"`, `["preset", …]` (same file) or
-`{"file": "preset"}` (a category file such as `parameters/abacus/test.yml`).
+`{"file": "preset"}` (a category file such as `parameters/abacus/test.yml`) — the
+three spellings work for `scan` as well (`{"scan": "pw_cutoff_quick"}`).
 `static.pseudo_path` is injected into the SIAB config as `pseudo_dir`, so one
 orbgen preset works with any pseudopotential; `static.metadata` picks the
 scheduler options; `static.output_dir` (or `--output-root`) sets the SIAB run
@@ -210,24 +239,39 @@ code.  So the route is the same one as for every other run:
 
 ```json
 {
-  "parameters": {"abacus": {"lcao_only": "lcao"}, "orbgen": {"u": "u_14ve"}},
-  "static": { "...": "...", "output_dir": "/scratch/u/scans" },
+  "parameters": {
+    "abacus": {"lcao_only": "lcao"},              // level 1: LCAO children only
+    "orbgen": {"u_14ve": "ref_r12_l4_j150"},      // level 2: the reference point
+    "scan":   {"u_14ve": "basis_ladder"}          // level 3: the ladder + criterion
+  },
+  "static": {
+    "pseudo_path": "/abs/path/U.pbe-n-nc.UPF",    // overrides the preset's pseudo_dir
+    "metadata": "yeesuan_bigmem",                 // queue / MPI / walltime / memory
+    "output_dir": "/scratch/u/scans",
+    "tolerance_meV": 100                          // the criterion, per run
+  },
   "profile": "aiida_profile",
   "code": {"abacus": "abacus_lts@yeesuan"},
 
-  "workflow": "orbgen.basis",
-  "scan": {
-    "reference_ecutjy": 150,
-    "ecutjy_values": [125, 100],
-    "l_max_values": [3],
-    "r_cut_values": [11, 10],
-    "ecutwfc": 180,
-    "strategy": "ladder",
-    "by": "seconds",
-    "stop_on_first_pass": true,
-    "atomization_tolerance_meV": 50
-  }
+  // optional: override single keys of the scan preset for this run
+  "scan": {"by": "nchi"}
 }
+```
+
+The ladder itself lives in the preset tree, so nothing about it is in the caller's
+code — `parameters/scan/u_14ve.yml#basis_ladder` is exactly
+
+```yaml
+basis_ladder:
+  reference_ecutjy: 150
+  ecutjy_values: [125, 100]
+  l_max_values: [3]
+  r_cut_values: [11, 10]
+  ecutwfc: 180
+  strategy: ladder
+  by: seconds
+  stop_on_first_pass: true
+  atomization_tolerance_meV: 50
 ```
 
 ```bash
@@ -237,7 +281,7 @@ aiida-orbgen run   -i input.json            # submit; writes <input_dir>/output.
 verdi process report <PK>                   # the ladder, the table, the winner
 ```
 
-| entry point | question | `scan` keys | criterion |
+| entry point | question | `scan` keys (in a preset or inline) | criterion |
 | --- | --- | --- | --- |
 | `orbgen.ecutwfc` | which `ecutwfc` is the PW reference converged at? | `ecutwfc_values` (or `ecutwfc_scale` × `baseline_ecutwfc`), `reference_ecutwfc`, `with_lcao` | the total energy of the reference geometries stops moving between neighbouring cutoffs (`tolerance_meV` per atom) |
 | `orbgen.basis` | which `(r_cut, l_max, ecutjy)` is the cheapest basis that is accurate enough? | `reference_ecutjy`, `ecutjy_values`, `l_max_values`, `r_cut_values`, `strategy`, `ecutwfc`, `by`, `stop_on_first_pass`, `atomization_tolerance_meV`, `pw_reference` / `pw_reference_pk` | `max |E_nsw - E_pw|` per atom over the same geometries, optionally plus the atomization-energy drift against the reference candidate |
