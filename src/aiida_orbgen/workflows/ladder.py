@@ -190,14 +190,16 @@ def plan_evaluation_order(
     reference_label: str | None = None,
     baseline_first: bool = False,
 ) -> list[dict[str, Any]]:
-    """Order a ladder for evaluation: cheapest first, never the reference first.
+    """Order a ladder for evaluation: cheapest first, the reference last.
 
-    The reference point of a ladder meets the tolerance *by construction* (its own
-    ``|E_nsw - E_pw|`` is zero), so it must never be what an early exit stops at --
-    otherwise a scan stops at the most expensive basis it knows and never finds the
-    reduction it exists for.  It is therefore evaluated last, and the cheaper candidates
-    are walked in increasing cost order so that the first one that passes **is** the
-    cheapest one that passes.
+    The reference point is the *most expensive* candidate of the ladder, and a scan that
+    stops at the first acceptable candidate would stop there every time -- never finding
+    the reduction it exists for.  It therefore goes last and never counts as the
+    reduction; the cheaper candidates are walked in increasing cost order, so the first
+    one that passes **is** the cheapest one that passes.  (The reference is not
+    automatically *accurate* -- it is the basis the scan starts from, nothing more -- so
+    a ladder whose reference is not good enough ends with no candidate inside the
+    tolerance at all.)
 
     ``baseline_first`` puts the reference first instead: the atomization gate compares
     every candidate against the reference row, so with that gate the baseline has to
@@ -372,6 +374,51 @@ def describe_row(row: Mapping[str, Any], tolerance_meV: float | None = None) -> 
     return line + f" ({cost_txt}{atom_txt})"
 
 
+def no_basis_message(
+    table: Mapping[str, Any],
+    tolerance_meV: float,
+    *,
+    reference: str | None = None,
+    atomization_tolerance_meV: float | None = None,
+) -> str:
+    """Why nothing was chosen, and what to change.
+
+    Three different situations end a scan with no winner, and they need different
+    answers: the ladder never made it (some candidates were not evaluated), the
+    reference point itself is not accurate enough (the ladder cannot reduce from it),
+    or the tolerance/gate is simply stricter than this basis family can be.
+    """
+    rows = list(table.get("rows") or [])
+    if not rows:
+        return ("no candidate could be evaluated: check the failed children of the "
+                "previous steps")
+    passed = [row["label"] for row in rows if row.get("tolerance_ok")]
+    worst = min(row["dE_max_abs_meV"] for row in rows
+                if row.get("dE_max_abs_meV") is not None) if any(
+        row.get("dE_max_abs_meV") is not None for row in rows) else None
+    reference_row = next((row for row in rows if row["label"] == reference), None)
+    parts = [f"no candidate is inside {tolerance_meV:g} meV/atom"]
+    if reference_row is not None and not reference_row.get("tolerance_ok"):
+        parts.append(
+            f"and the reference point ({reference}) is not either "
+            f"({reference_row.get('dE_max_abs_meV')} meV/atom): the ladder cannot reduce "
+            f"from a basis that is itself not accurate enough -- start from a larger "
+            f"reference point (r_cut / l_max / ecutjy)"
+        )
+    elif worst is not None:
+        parts.append(
+            f"the best candidate is {float(worst):.2f} meV/atom: widen the ladder, or "
+            f"relax tolerance_meV"
+        )
+    if passed and atomization_tolerance_meV is not None:
+        parts.append(
+            f"{len(passed)} candidate(s) met tolerance_meV but were rejected by the "
+            f"atomization gate ({atomization_tolerance_meV:g} meV): relax it if the "
+            f"defect-like criterion is not what you are testing"
+        )
+    return "; ".join(parts)
+
+
 def pick_cheapest(
     table: Mapping[str, Any],
     *,
@@ -409,6 +456,7 @@ __all__ = [
     "candidate_cost",
     "candidate_label",
     "describe_row",
+    "no_basis_message",
     "pick_cheapest",
     "plan_candidates",
     "plan_evaluation_order",

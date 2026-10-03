@@ -223,10 +223,13 @@ def record_child(
 
 
 def seconds_of(node) -> float | None:
-    """Wall-clock seconds a finished child occupied, from its own timestamps.
+    """Wall-clock seconds one finished child occupied, from its own timestamps.
 
-    Used as the cost proxy of a candidate: it is what the queue actually billed, and
-    it is available without reading any output file.
+    Summed over the children of a candidate this is the *resource* it used (what the
+    queue bills), not the elapsed time of the scan -- the children of one candidate run
+    in parallel, so the elapsed time is roughly the largest of them.  For comparing
+    "what does this basis cost" the sum is the right number, and it is available without
+    reading a single output file.
     """
     try:
         return float((node.mtime - node.ctime).total_seconds())

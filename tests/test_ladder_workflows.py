@@ -45,6 +45,7 @@ from aiida_orbgen.workflows.ladder import (
     candidate_cost,
     candidate_label,
     describe_row,
+    no_basis_message,
     pick_cheapest,
     plan_candidates,
     plan_evaluation_order,
@@ -171,11 +172,12 @@ def test_ladder_drops_duplicates_and_keeps_the_reference():
 
 
 def test_the_ladder_is_evaluated_cheapest_first_and_the_reference_last():
-    """The reference meets the tolerance by construction, so it may not be the answer.
+    """The reference is the most expensive candidate, so it may not be the answer.
 
     A scan that stopped at the first passing candidate of the *plan* order would stop at
-    the reference -- the most expensive basis of the ladder -- and never find the
-    reduction it exists for.
+    the reference and never find the reduction it exists for.  (Whether the reference
+    itself is accurate enough is a property of the reference *point*, not of the order:
+    a ladder whose reference fails the tolerance ends with no winner at all.)
     """
     plan = plan_candidates(
         r_cut_values=[11.0, 10.0], l_max_values=[3], ecutjy_values=[125.0, 100.0],
@@ -199,6 +201,35 @@ def test_the_evaluation_order_uses_the_cost_proxy_when_it_has_one():
     )
     assert [candidate_label(c) for c in order] == ["r12_l4_j125", "r12_l4_j150"]
     assert plan_evaluation_order([], reference_label=None) == []
+
+
+def test_the_no_winner_diagnosis_names_the_real_cause():
+    """Three ways to end with no winner, three different things to change.
+
+    The Si smoke run hit the first one: nothing passed *and* the reference point itself
+    was 257 meV/atom off, because r_cut 7 au is simply too small there -- the answer is a
+    larger reference point, not a wider ladder.
+    """
+    bad_reference = basis_table(
+        {"r7_l3_j100": {
+            "candidate": {"r_cut": 7.0, "l_max": 3, "ecutjy": 100.0},
+            "geometries": {"dimer-2.4": {"e_nsw": -99.5, "e_pw": -100.0, "n_atoms": 2}},
+            "seconds": 1124.0, "nchi": 314}},
+        100.0, reference="r7_l3_j100",
+    )
+    message = no_basis_message(bad_reference, 100.0, reference="r7_l3_j100")
+    assert "reference point" in message and "larger reference point" in message
+
+    # the bare table of the earlier fixtures: something did pass, but the gate rejected it
+    table = basis_table(_rows(), 20.0, reference="r12_l4_j150")
+    assert table["within_tolerance"] == ["r12_l4_j150", "r11_l4_j125"]
+    message = no_basis_message(
+        table, 0.01, reference="r12_l4_j150", atomization_tolerance_meV=50.0
+    )
+    assert "widen the ladder" in message or "reference point" in message
+    assert "atomization gate" in message
+
+    assert "could be evaluated" in no_basis_message({"rows": []}, 100.0)
 
 
 def test_the_cost_proxy_grows_with_the_basis():

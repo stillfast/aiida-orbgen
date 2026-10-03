@@ -23,11 +23,12 @@ WorkChain instead:
   derived from;
 * **evaluates cheapest first** (:func:`~aiida_orbgen.workflows.ladder.plan_evaluation_order`)
   and stops at the first candidate inside the tolerance (``stop_on_first_pass``, default
-  true): the reference point meets the tolerance by construction, so it is evaluated
-  *last* (or first when the atomization gate needs it as the baseline) and never counts
-  as the reduction -- otherwise a scan would stop at the most expensive basis it knows.
-  The first candidate that passes therefore *is* the cheapest one that passes, unless
-  the atomization gate rejects it, in which case the scan continues and says so;
+  true): the candidates are walked cheapest first and the reference point -- the most
+  expensive one -- is evaluated *last* (or first when the atomization gate needs it as
+  the baseline) and never counts as the reduction, because a scan that stopped there
+  would go back to the most expensive basis it knows.  The first candidate that passes
+  therefore *is* the cheapest one that passes, unless the atomization gate rejects it,
+  in which case the scan continues and says so;
 * reports the cost of every candidate (measured wall-clock ``seconds`` and the ``nchi``
   proxy), so the choice can be re-made with a different criterion without rerunning
   anything;
@@ -79,6 +80,7 @@ from aiida_orbgen.workflows.ladder import (
     candidate_cost,
     candidate_label,
     describe_row,
+    no_basis_message,
     pick_cheapest,
     plan_candidates,
     plan_evaluation_order,
@@ -313,8 +315,9 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
                 f"adding {self.ctx.reference_label}"
             )
         # Cheapest first, reference last -- or first when the atomization gate needs it
-        # as the baseline.  The reference meets the tolerance by construction (its own
-        # dE is zero), so it must never be the candidate the early exit stops at.
+        # as the baseline.  The reference is the most expensive candidate, so it must
+        # never be the candidate the early exit stops at: that would end every scan at
+        # the basis it was meant to reduce.
         costs = {
             candidate_label(entry): candidate_cost(
                 n_primitive_functions(entry["r_cut"], entry["ecutjy"], entry["l_max"]),
@@ -721,8 +724,8 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
         self.report("  " + describe_row(row_info, self._tolerance_meV()) + reason)
         if is_reference:
             self.report(
-                "  (the reference point is the fallback answer, not a reduction: it is "
-                "trivially inside the tolerance)"
+                "  (the reference point is the starting point of the ladder, not a "
+                "reduction: it is only the answer if nothing cheaper passes)"
             )
             self.ctx.cursor += 1
             return None
@@ -840,11 +843,10 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
             self.report("OrbgenBasisScanWorkChain: no candidate could be evaluated")
             return self.exit_codes.WARNING_ENERGY_EXTRACT_FAILED
         if best is None:
-            self.report(
-                f"OrbgenBasisScanWorkChain: no candidate is inside {tolerance:g} meV/atom "
-                f"-- widen the ladder"
-                + (f" (atomization gate {gate:g} meV was active)" if gate else "")
-            )
+            self.report("OrbgenBasisScanWorkChain: " + no_basis_message(
+                table, tolerance, reference=reference_label,
+                atomization_tolerance_meV=gate,
+            ))
             return self.exit_codes.WARNING_NO_BASIS_WITHIN_TOLERANCE
         if n_failed:
             self.report(
