@@ -17,6 +17,7 @@ from aiida.engine import calcfunction
 from aiida.orm import Dict, Str
 
 __all__ = [
+    "create_dict",
     "create_energies_dict",
     "create_final_results",
     "create_family_label",
@@ -38,6 +39,20 @@ def create_family_label(label) -> Str:
     if isinstance(label, Str):
         return Str(label.value)
     return Str(str(getattr(label, "value", label)))
+
+
+@calcfunction
+def create_dict(d: dict) -> Dict:
+    """Wrap any plain dict as an AiiDA ``Dict`` output of a WorkChain.
+
+    A ``Dict`` may not be constructed directly inside a step -- AiiDA insists that
+    outputs come from a stored node ("tried returning an unstored Data node") -- so
+    every decision dict of the value-selection scans goes through here, exactly as
+    ``energies`` does through :func:`create_energies_dict`.
+    """
+    if hasattr(d, "get_dict"):     # already an AiiDA Dict
+        return Dict(dict=d.get_dict())
+    return Dict(dict=dict(d))
 
 
 @calcfunction

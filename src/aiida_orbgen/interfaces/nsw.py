@@ -70,7 +70,8 @@ def legacy_point_dir_name(l_max: int, r_cut: float) -> str:
     return f"lmax{int(l_max)}_rcut{str(r_cut).replace('.', LEGACY_POINT_DIR_SUFFIX)}"
 
 
-def apply_grid_point(config: dict, l_max: int, r_cut: float) -> dict:
+def apply_grid_point(config: dict, l_max: int, r_cut: float,
+                     ecutjy: float | None = None) -> dict:
     """Return ``config`` with one ``(l_max, r_cut)`` grid point applied.
 
     This is the **only** implementation of that override.  It used to exist
@@ -79,10 +80,16 @@ def apply_grid_point(config: dict, l_max: int, r_cut: float) -> dict:
     spelling -- so the same grid point produced differently named primitive and
     final orbitals depending on which layer had derived the config.
 
+    ``ecutjy`` is the third orbital parameter (the JY fitting cutoff).  SIAB reads it
+    from the config file, so a scan that varies it has to override it here too:
+    ``orbgen.basis`` walks ``ecutjy`` as the first and dominant step of its ladder.
+
     The input mapping is not modified.
     """
     config = copy.deepcopy(config)
     config["bessel_nao_rcut"] = [folder_rcut(r_cut)]
+    if ecutjy is not None:
+        config["ecutjy"] = float(ecutjy)
     geoms = config.get("geoms")
     if geoms:
         geoms[0]["lmaxmax"] = int(l_max)

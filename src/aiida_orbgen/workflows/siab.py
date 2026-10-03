@@ -89,6 +89,7 @@ def run_siab_pipeline(
     lmax: Int,
     rcut: Float,
     code_version: Str = None,
+    ecutjy: Float = None,
 ) -> dict:
     """Run ``generate_all_from_json`` on the worker and report the job list.
 
@@ -106,6 +107,12 @@ def run_siab_pipeline(
         digest of the code that builds the job list (:func:`siab_code_digest`).  It is
         only there to invalidate AiiDA's cache when that code changes; the value itself
         is never read.
+    ecutjy : Float, optional
+        JY fitting cutoff in Ry, when the caller scans it (``orbgen.basis``).  SIAB reads
+        ``ecutjy`` from the config file, so overriding it here is the only way to give a
+        *candidate* ladder point its own primitive basis -- ``lmax``/``rcut`` cannot
+        express it.  ``None`` keeps the value of the JSON, which is what every other
+        caller wants.
 
     Returns
     -------
@@ -132,7 +139,10 @@ def run_siab_pipeline(
     content = siab_json.get_content()
     if isinstance(content, bytes):
         content = content.decode("utf-8")
-    cfg = apply_grid_point(_json.loads(content), int(lmax.value), float(rcut.value))
+    cfg = apply_grid_point(
+        _json.loads(content), int(lmax.value), float(rcut.value),
+        None if ecutjy is None else float(ecutjy.value),
+    )
 
     run_dir = _os.path.abspath(output_dir.value)
     _os.makedirs(run_dir, exist_ok=True)
@@ -161,6 +171,10 @@ def run_siab_pipeline(
         "config_path": local_json,
         "lmax": int(lmax.value),
         "rcut": float(rcut.value),
+        # The JY fitting cutoff actually used: the JSON's, unless the caller scanned it
+        # (orbgen.basis).  Recorded because it -- not lmax/rcut -- is what names the
+        # primitive orbital along with the two of them.
+        "ecutjy": (None if ecutjy is None else float(ecutjy.value)),
     })
 
     # The primitive orbital itself goes into the provenance.  The paths in

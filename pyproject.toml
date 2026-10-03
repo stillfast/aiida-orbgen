@@ -45,6 +45,9 @@ aiida-orbgen = "aiida_orbgen.cli.run:main"
 # Two-level workchain architecture (flowchart)
 "orbgen.calc"   = "aiida_orbgen.workflows.batch:OrbgenCalcWorkChain"
 "orbgen.gridsearch" = "aiida_orbgen.workflows.batch:OrbgenGridSearchWorkChain"
+# The two value-selection workflows: which parameters to use, before producing anything
+"orbgen.ecutwfc" = "aiida_orbgen.workflows.ecutwfc:OrbgenEcutwfcWorkChain"
+"orbgen.basis"   = "aiida_orbgen.workflows.basis:OrbgenBasisScanWorkChain"
 
 [project.optional-dependencies]
 dev = [

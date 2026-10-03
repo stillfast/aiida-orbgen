@@ -6,6 +6,10 @@ Two-level WorkChain architecture:
   — one ``(l_max, r_cut)``: SIAB pipeline + {PW, LCAO:nsw} x N structures, ΔE
 - :class:`OrbgenGridSearchWorkChain`  (entry point: ``orbgen.gridsearch``)
   — many candidates, pick the cheapest acceptable one by ΔE
+- :class:`OrbgenEcutwfcWorkChain`  (entry point: ``orbgen.ecutwfc``)
+  — converge the PW reference: total energy vs ecutwfc
+- :class:`OrbgenBasisScanWorkChain`  (entry point: ``orbgen.basis``)
+  — pick (r_cut, l_max, ecutjy) by |E_nsw - E_pw|, cheapest first
 
 Both classes live in :mod:`aiida_orbgen.workflows.batch` -- the module
 ``pyproject.toml`` registers.  This package used to re-export
@@ -24,7 +28,12 @@ Module layout
                  checks the NUMERICAL_ORBITAL reference of an ABACUS child
 ``energies.py``  the ΔE arithmetic, the tolerance verdict, the 304-is-a-success rule
 ``extract.py``   reading children (``misc.total_energy``, the STRU guard) into records
-``results.py``   assembly of the output Dicts (four calcfunctions)
+``results.py``   assembly of the output Dicts (the calcfunctions)
+``ladder.py``    the decision rules of the two value-selection scans (pure logic)
+``ecutwfc.py``   ``orbgen.ecutwfc``: the PW cutoff ladder
+``basis.py``     ``orbgen.basis``: the (r_cut, l_max, ecutjy) ladder against one PW
+                 reference
+``_children.py``  child submission shared by those two scans
 
 ``advanced.py`` was deleted on 2026-09-29: its three unique capabilities
 (``stop_on_first_valid``, an explicit ``candidates`` list, and the
@@ -36,6 +45,8 @@ from aiida_orbgen.workflows.batch import (
     OrbgenCalcWorkChain,
     OrbgenGridSearchWorkChain,
 )
+from aiida_orbgen.workflows.basis import OrbgenBasisScanWorkChain
+from aiida_orbgen.workflows.ecutwfc import OrbgenEcutwfcWorkChain
 from aiida_orbgen.workflows.siab import (
     build_abacus_child_inputs,
     n_atoms_from_stru,
@@ -43,7 +54,9 @@ from aiida_orbgen.workflows.siab import (
 )
 
 __all__ = [
+    "OrbgenBasisScanWorkChain",
     "OrbgenCalcWorkChain",
+    "OrbgenEcutwfcWorkChain",
     "OrbgenGridSearchWorkChain",
     "build_abacus_child_inputs",
     "n_atoms_from_stru",
