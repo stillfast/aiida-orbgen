@@ -63,7 +63,7 @@ from aiida_orbgen.utils.cal_json import (
     read_output_json,
     write_cal_json,
 )
-from aiida_orbgen.utils.config import ConfigLoader
+from aiida_orbgen.utils.config import SCAN_WORKFLOWS, ConfigLoader
 
 __all__ = [
     "main",
@@ -121,6 +121,8 @@ def _print_plan(bundle, plans) -> None:
         print(f"       output_dir    : {plan.output_dir}")
         if plan.workflow == METHOD_SPECS["orbgen.gridsearch"].name:
             print(f"       search_strategy: {plan.search_strategy}")
+        if plan.workflow in SCAN_WORKFLOWS:
+            print(f"       scan          : {plan.describe_scan()}")
         tolerance = plan.abacus_config.get("tolerance_meV")
         if tolerance is not None:
             print(f"       tolerance_meV : {tolerance}")
@@ -214,6 +216,17 @@ def cmd_report(args) -> int:
         data = read_output_json(output_json)
     except Exception as exc:  # noqa: BLE001
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if data.get("workflow") in SCAN_WORKFLOWS:
+        # `report` builds the final CSW-NAO orbital from a reference DFT tree; a scan
+        # has no tree of its own -- it *chooses* the parameters that run will use.
+        print(
+            f"[report] {output_json} holds a {data['workflow']} run: it produced a "
+            f"decision, not an orbital flat. Read it with `verdi process report <PK>` "
+            f"or `python tools/read_scan.py <PK>`, then feed the chosen values back "
+            f"into the input.json of an `orbgen.calc` run.",
+            file=sys.stderr,
+        )
         return 1
 
     entries = collect_job_entries(data)
@@ -560,11 +573,14 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help="Submit the orbgen WorkChain(s) described by an input.json.",
         description=(
-            "Read input.json + the parameters/ presets, submit one "
-            "OrbgenCalcWorkChain (single (l_max, r_cut)) or "
-            "OrbgenGridSearchWorkChain (whole candidate grid) per "
-            "(abacus preset × orbgen preset), and write output.json next to "
-            "the input file."
+            "Read input.json + the parameters/ presets, submit one WorkChain per "
+            "(abacus preset × orbgen preset), and write output.json next to the input "
+            "file.  Which WorkChain is decided by input.json['workflow'], else by the "
+            "candidate grid (one point -> OrbgenCalcWorkChain, several -> "
+            "OrbgenGridSearchWorkChain), else by the 'scan' section "
+            "(ecutwfc_values -> OrbgenEcutwfcWorkChain; one ladder of "
+            "ecutjy/l_max/r_cut -> OrbgenBasisScanWorkChain).  Every parameter of "
+            "'scan' comes from input.json; the plugin only holds the code."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

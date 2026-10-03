@@ -91,7 +91,9 @@ class OrbgenEcutwfcWorkChain(OrbgenCalcWorkChain):
     ecutwfc_decision : Dict
         ``pw_convergence``'s result (``values``, ``steps``, ``chosen``, ``converged``,
         ``per_geometry``) plus ``baseline_ecutwfc``, ``reference_ecutwfc``, the
-        ``tolerance_meV`` used, and -- when the LCAO children ran --
+        ``tolerance_meV`` used, ``pw_reference`` (``{"ecutwfc": …, "geometries":
+        {geometry: {energy, n_atoms}}}`` at the reference cutoff, ready to be handed to
+        ``orbgen.basis`` via ``input.json["scan"]["pw_reference_pk"]``), and -- when the LCAO children ran --
         ``lcao_vs_pw`` (per-geometry ``dE_per_atom_meV`` and its maximum).
     siab_info, primitive_orbital, pseudo_family, results
         as in ``orbgen.calc``.
@@ -331,6 +333,23 @@ class OrbgenEcutwfcWorkChain(OrbgenCalcWorkChain):
         decision = pw_convergence(curve, tolerance_meV)
         decision["baseline_ecutwfc"] = self._baseline_ecutwfc()[0]
         decision["reference_ecutwfc"] = float(getattr(self.ctx, "reference_ecutwfc", 0.0))
+        # The PW reference itself, at the cutoff that counts as converged: this is what
+        # `orbgen.basis` wants as its `pw_reference` input (and what
+        # `input.json["scan"]["pw_reference_pk"]` reads), so the expensive PW side of a
+        # basis comparison is paid for exactly once.
+        if curve.get(decision["reference_ecutwfc"]):
+            # Wrapped under "geometries" on purpose: AiiDA refuses *top-level* Dict keys
+            # containing a dot, and the geometry names of a perturbed dimer are
+            # "dimer-2.8".  Nested keys have no such rule, so one level of structure
+            # makes the block storable (and `scan.pw_reference` takes the same shape).
+            decision["pw_reference"] = {
+                "ecutwfc": float(decision["reference_ecutwfc"]),
+                "geometries": {
+                    geometry: {"energy": float(item["energy"]),
+                               "n_atoms": int(item["n_atoms"])}
+                    for geometry, item in curve[decision["reference_ecutwfc"]].items()
+                },
+            }
         decision["n_geometries"] = len(
             {geom for entry in curve.values() for geom in entry}
         )

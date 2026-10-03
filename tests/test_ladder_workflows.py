@@ -488,6 +488,29 @@ def test_n_primitive_functions_grows_with_every_parameter():
     assert n_primitive_functions(11.0, 125.0, 5) > base
 
 
+def test_the_solver_follows_the_basis_the_child_runs():
+    """`genelpa` + PW and `dav` + LCAO are refused by ABACUS, not merely slow.
+
+    `orbgen.ecutwfc` submits PW children *and* (with `with_lcao`) LCAO children from the
+    same `abacus.json`, so one preset has to survive both.  Found by running the CLI
+    route with the `lcao_only` preset: 12 of 18 children died.
+    """
+    from aiida_orbgen.workflows.siab import _solver_for_basis
+
+    assert _solver_for_basis("genelpa", "pw") == "dav"
+    assert _solver_for_basis("scalapack_gvx", "pw") == "dav"
+    assert _solver_for_basis("dav", "lcao") == "genelpa"
+    assert _solver_for_basis("cg", "lcao") == "genelpa"
+    # what matches stays, and an unknown keyword is left to ABACUS
+    assert _solver_for_basis("genelpa", "lcao") == "genelpa"
+    assert _solver_for_basis("dav", "pw") == "dav"
+    assert _solver_for_basis("cg", "pw") == "cg"
+    assert _solver_for_basis("mystery", "pw") == "mystery"
+    # ... and a preset that names no solver gets the basis default
+    assert _solver_for_basis(None, "pw") == "dav"
+    assert _solver_for_basis(None, "lcao") == "genelpa"
+
+
 def test_apply_grid_point_can_override_the_jy_cutoff():
     config = {"ecutjy": 150, "bessel_nao_rcut": [12], "geoms": [{"lmaxmax": 4}]}
     assert apply_grid_point(config, 4, 11.0)["ecutjy"] == 150      # unchanged

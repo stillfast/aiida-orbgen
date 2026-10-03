@@ -236,13 +236,12 @@ def build_abacus_child_inputs(
     # 2) switch basis_type and ks_solver according to `basis`
     if basis == "pw":
         merged["basis_type"] = "pw"
-        # PW basis does not support scalapack_gvx; fall back to a PW solver
-        if merged.get("ks_solver") == "scalapack_gvx":
-            merged["ks_solver"] = "dav"
+        merged["ks_solver"] = _solver_for_basis(merged.get("ks_solver"), "pw")
         # the PW basis has no out_wfc_lcao
         merged.pop("out_wfc_lcao", None)
     elif basis == "lcao_nsw":
         merged["basis_type"] = "lcao"
+        merged["ks_solver"] = _solver_for_basis(merged.get("ks_solver"), "lcao")
         # LCAO needs orbital_dir (injected by AiiDA from the pseudo family)
     else:
         raise ValueError(f"Unknown basis: {basis!r}")
@@ -288,6 +287,39 @@ def build_abacus_child_inputs(
         "kpoints": kp,
         "pseudo_family": Str(family_label),
     }
+
+
+#: ``ks_solver`` values ABACUS accepts for each basis.  The two sets do not overlap,
+#: so a preset written for one basis is *invalid* for the other -- and ABACUS does not
+#: say so until the child has started and died:
+#:
+#: * ``genelpa``/``scalapack_gvx``/``cusolver``/``lapack``/``pexsi`` are LCAO solvers;
+#: * ``dav``/``cg``/``ppcg``/``bpcg`` are PW solvers.
+PW_SOLVERS = frozenset({"dav", "cg", "ppcg", "bpcg"})
+LCAO_SOLVERS = frozenset({"genelpa", "scalapack_gvx", "cusolver", "lapack", "pexsi"})
+
+#: What to use when the preset names a solver of the other basis (or none at all).
+DEFAULT_SOLVER = {"pw": "dav", "lcao": "genelpa"}
+
+
+def _solver_for_basis(solver, basis: str) -> str:
+    """The ``ks_solver`` to run this basis with, given the preset's value.
+
+    One ABACUS preset is often asked to run both bases — ``orbgen.ecutwfc`` submits PW
+    children for the cutoff ladder *and* (``with_lcao``) LCAO children for the basis
+    check, from the same ``abacus.json``.  ``genelpa`` + PW or ``dav`` + LCAO are not
+    "suboptimal", they are refused by ABACUS, so the mismatch is repaired here: that is
+    the one place that knows which basis a child is about to run.  An unknown solver is
+    left alone (it may be a newer ABACUS keyword).
+    """
+    if not solver:
+        return DEFAULT_SOLVER[basis]
+    name = str(solver).strip().lower()
+    if basis == "pw" and name in LCAO_SOLVERS:
+        return DEFAULT_SOLVER["pw"]
+    if basis == "lcao" and name in PW_SOLVERS:
+        return DEFAULT_SOLVER["lcao"]
+    return solver
 
 
 def n_atoms_from_stru(stru_path: str | None, report=None) -> int:

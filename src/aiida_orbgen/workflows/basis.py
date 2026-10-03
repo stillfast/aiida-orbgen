@@ -114,8 +114,10 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
         PW cutoff of the reference children (default: ``abacus.json``).  Pass the value
         :class:`~aiida_orbgen.workflows.ecutwfc.OrbgenEcutwfcWorkChain` converged to.
     pw_reference : Dict, optional
-        ``{geometry: {"energy": eV, "n_atoms": N}}`` of an already computed PW
-        reference: with it the scan runs **no** PW child at all.
+        An already computed PW reference, either ``{"geometries": {geometry: {"energy":
+        eV, "n_atoms": N}}}`` (what ``orbgen.ecutwfc`` records, and what
+        ``input.json["scan"]["pw_reference"]``/``pw_reference_pk`` supply) or a bare
+        ``{geometry: …}`` mapping: with it the scan runs **no** PW child at all.
     stop_on_first_pass : Bool, optional
         stop at the first candidate inside the tolerance (default True).  The candidates
         are walked cheapest first, so this stops at the cheapest acceptable basis.
@@ -253,12 +255,17 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
         return 100.0, "default 100 Ry"
 
     def _pw_reference(self) -> dict[str, Any]:
-        """The PW energies the candidates are compared against."""
+        """``{geometry: {"energy": eV, "n_atoms": N}}`` the candidates compare against.
+
+        Accepts the ``{"geometries": {...}}`` wrapper that ``orbgen.ecutwfc`` records
+        (and that ``scan.pw_reference``/``scan.pw_reference_pk`` pass on) as well as a
+        bare mapping, because AiiDA forbids *top-level* Dict keys with a dot — a bare
+        mapping is only storable when the geometry names have none.
+        """
         if "pw_reference" in self.inputs:
-            return {
-                str(key): dict(value)
-                for key, value in self.inputs.pw_reference.get_dict().items()
-            }
+            raw = self.inputs.pw_reference.get_dict()
+            geometries = raw.get("geometries") if "geometries" in raw else raw
+            return {str(key): dict(value) for key, value in (geometries or {}).items()}
         return dict(getattr(self.ctx, "pw_reference", {}) or {})
 
     # ------------------------------------------------------------------
@@ -676,12 +683,26 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
         for note in collected.notes:
             self.report(note)
 
+        pw_reference = self._pw_reference()
         try:
             geometry_rows = geometries_from_entries(
-                collected.entries, pw_reference=self._pw_reference()
+                collected.entries, pw_reference=pw_reference
             )
         except Exception as exc:  # noqa: BLE001
             self.report(f"  ERROR: could not pair the energies of {label}: {exc}")
+            _skip()
+            return None
+
+        if pw_reference and not any("e_pw" in slot
+                                    for slot in geometry_rows.get(label, {}).values()):
+            # A reused PW reference whose geometry names do not match this run's would
+            # leave every candidate uncomparable -- say so instead of reporting rows of
+            # "no comparable geometry" one after the other.
+            self.report(
+                f"  ERROR: the supplied pw_reference ({len(pw_reference)} geometries: "
+                f"{', '.join(sorted(pw_reference)[:4])}…) matches none of this run's "
+                f"geometries ({', '.join(sorted(geometry_rows.get(label, {}))) or 'none'})"
+            )
             _skip()
             return None
 
@@ -795,7 +816,9 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
             "pw_reference": {
                 "source": ("input pw_reference" if "pw_reference" in self.inputs
                            else getattr(self.ctx, "pw_source", "none")),
-                "ecutwfc": self._pw_ecutwfc(),
+                # the cutoff the PW energies in hand were computed at: the reused
+                # reference's own when it says so, else this run's setting
+                "ecutwfc": self._pw_reference_ecutwfc(),
                 "n_geometries": len(self._pw_reference()),
             },
         }
@@ -859,6 +882,19 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
             f"{len(rows)} evaluated candidate(s)"
         )
         return ExitCode(0)
+
+    def _pw_reference_ecutwfc(self) -> Any:
+        """The cutoff behind the PW energies this scan compares against.
+
+        With ``pw_reference``/``pw_reference_pk`` the reference was computed elsewhere,
+        possibly at another cutoff, and reporting this run's ``abacus.json`` value would
+        hide exactly the difference that matters when the two are cross-checked.
+        """
+        if "pw_reference" in self.inputs:
+            cutoff = self.inputs.pw_reference.get_dict().get("ecutwfc")
+            if cutoff is not None:
+                return cutoff
+        return self._pw_ecutwfc()
 
     def _pw_ecutwfc(self) -> Any:
         """The PW cutoff the reference children run with.

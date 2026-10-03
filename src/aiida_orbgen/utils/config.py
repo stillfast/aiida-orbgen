@@ -68,10 +68,39 @@ being silently mixed).
 ``code``
     ``{"abacus": "<AiiDA code label>"}``.
 ``workflow``
-    Optional. ``"orbgen.calc"`` (single ``(l_max, r_cut)``) or
-    ``"orbgen.gridsearch"`` (whole candidate grid). When absent the loader
-    decides from the candidate grid: one candidate → ``orbgen.calc``,
-    more than one → ``orbgen.gridsearch``.
+    Optional. ``"orbgen.calc"`` (single ``(l_max, r_cut)``),
+    ``"orbgen.gridsearch"`` (whole candidate grid), or one of the two
+    value-selection scans ``"orbgen.ecutwfc"`` / ``"orbgen.basis"``. When absent the
+    loader decides: a non-empty ``scan`` section says which scan its keys describe
+    (:data:`SCAN_KEYS`), otherwise the candidate grid does (one candidate →
+    ``orbgen.calc``, more than one → ``orbgen.gridsearch``).
+``scan``
+    Optional, and the only place the parameters of a scan live — the workflows
+    themselves are generic. Its keys are listed in :data:`SCAN_KEYS`; every one of
+    them is validated here, so a mistyped ladder fails in ``check`` instead of
+    submitting a different scan:
+
+    .. code-block:: json
+
+        "scan": {
+          "ecutwfc_values": [100, 120, 150, 180, 200],
+          "with_lcao": true
+        }
+
+    or, for ``orbgen.basis`` (``l_max``/``r_cut`` stay in the orbgen preset — they are
+    its candidate grid, i.e. the *reference point* of the ladder):
+
+    .. code-block:: json
+
+        "scan": {
+          "reference_ecutjy": 150.0,
+          "ecutjy_values": [125, 100],
+          "l_max_values": [3],
+          "r_cut_values": [11, 10],
+          "ecutwfc": 180,
+          "atomization_tolerance_meV": 50,
+          "pw_reference_pk": 469028
+        }
 """
 
 from __future__ import annotations
@@ -88,7 +117,13 @@ __all__ = [
     "METADATA_FILE",
     "WORKFLOW_CALC",
     "WORKFLOW_GRIDSEARCH",
+    "WORKFLOW_ECUTWFC",
+    "WORKFLOW_BASIS",
     "SUPPORTED_WORKFLOWS",
+    "SCAN_WORKFLOWS",
+    "SCAN_KEYS",
+    "canonical_scan_config",
+    "scan_families",
     "PresetEntry",
     "ParamBundle",
     "ConfigLoader",
@@ -106,7 +141,18 @@ METADATA_FILE = PARAMETERS_DIR / "metadata.yml"
 
 WORKFLOW_CALC = "orbgen.calc"
 WORKFLOW_GRIDSEARCH = "orbgen.gridsearch"
-SUPPORTED_WORKFLOWS = (WORKFLOW_CALC, WORKFLOW_GRIDSEARCH)
+WORKFLOW_ECUTWFC = "orbgen.ecutwfc"
+WORKFLOW_BASIS = "orbgen.basis"
+SUPPORTED_WORKFLOWS = (
+    WORKFLOW_CALC,
+    WORKFLOW_GRIDSEARCH,
+    WORKFLOW_ECUTWFC,
+    WORKFLOW_BASIS,
+)
+
+#: The two ``scan`` workflows choose *parameters*: they produce a decision, not an
+#: orbital flat, so ``report`` refuses them.
+SCAN_WORKFLOWS = (WORKFLOW_ECUTWFC, WORKFLOW_BASIS)
 
 #: slot -> (sub-directory, default preset file inside it)
 SLOTS: dict[str, tuple[str, str]] = {
@@ -135,6 +181,120 @@ SIAB_RECOMMENDED_KEYS = ("ecutwfc", "abacus_command", "environment", "mpi_comman
 #: "THE PARAMETER NAME 'ecutjy' IS NOT USED! ... Bad parameter", which makes
 #: every AbacusCalculation Excepted (observed 2026-09-19).
 SIAB_ONLY_INPUT_KEYS = ("ecutjy", "vloc_aux", "primitive_type", "nzeta")
+
+
+#: ``input.json["scan"]`` — the parameters of the two value-selection workflows.
+#: ``key -> (workflow family, python type, what it does)``; the family is what the
+#: loader uses to tell "this input.json wants an ecutwfc scan" from "… a basis scan".
+SCAN_KEYS: dict[str, tuple[str, type, str]] = {
+    # -- orbgen.ecutwfc -----------------------------------------------------
+    "ecutwfc_values": ("ecutwfc", list, "the ladder of PW cutoffs (Ry)"),
+    "ecutwfc_scale": ("ecutwfc", list,
+                      "multipliers of baseline_ecutwfc (used without ecutwfc_values)"),
+    "baseline_ecutwfc": ("ecutwfc", (int, float),
+                         "cutoff the reference was generated at"),
+    "reference_ecutwfc": ("ecutwfc", (int, float),
+                          "cutoff that counts as converged (default: the largest)"),
+    "with_lcao": ("ecutwfc", bool,
+                  "also run one LCAO child per geometry at reference_ecutwfc"),
+    # -- orbgen.basis -------------------------------------------------------
+    "reference_ecutjy": ("basis", (int, float), "ecutjy of the reference point (Ry)"),
+    "ecutjy_values": ("basis", list, "ecutjy candidates to reduce to (Ry)"),
+    "l_max_values": ("basis", list, "l_max candidates to reduce to"),
+    "r_cut_values": ("basis", list, "r_cut candidates to reduce to (Bohr)"),
+    "strategy": ("basis", str, "'ladder' (default) or 'exhaustive'"),
+    "ecutwfc": ("basis", (int, float), "PW cutoff of the reference children (Ry)"),
+    "stop_on_first_pass": ("basis", bool,
+                           "stop at the cheapest candidate inside the tolerance"),
+    "atomization_tolerance_meV": ("basis", (int, float),
+                                  "also keep |d(atomization energy)| inside this"),
+    "by": ("basis", str, "cost key of 'cheapest': seconds | cost | nchi"),
+    "pw_reference": ("basis", dict,
+                     "{geometry: {energy, n_atoms}}: reuse a computed PW reference"),
+    "pw_reference_pk": ("basis", int,
+                        "PK of a scan whose PW reference to reuse (no PW child runs)"),
+}
+
+#: Keys that select a workflow rather than configure it.
+SCAN_SELECTOR_KEYS: dict[str, str] = {
+    key: family for key, (family, _type, _help) in SCAN_KEYS.items()
+}
+
+
+def canonical_scan_config(scan: dict | None, *, source: str = "input.json['scan']") -> dict:
+    """Validate ``input.json['scan']`` and return it as the workflows want it.
+
+    The section holds the *parameters of the scan* (the ladder, the criterion, the
+    reference point) — never code: both workflows are generic and everything they do
+    differently comes from here.  Unknown keys are an error rather than a silent
+    no-op, because a mistyped ladder would otherwise submit a valid but different
+    scan; a key that belongs to the other scan family is reported the same way, since
+    ``ecutwfc_values`` next to ``r_cut_values`` is almost always a leftover.
+    """
+    if scan is None:
+        return {}
+    if not isinstance(scan, dict):
+        raise TypeError(
+            f"{source} must be an object mapping the scan parameters to values, "
+            f"got {type(scan).__name__}"
+        )
+    unknown = [key for key in scan if key not in SCAN_KEYS]
+    if unknown:
+        raise KeyError(
+            f"{source} has unknown key(s) {sorted(unknown)}; supported: "
+            f"{sorted(SCAN_KEYS)}"
+        )
+    out: dict[str, Any] = {}
+    families: set[str] = set()
+    for key, value in scan.items():
+        family, expected, help_text = SCAN_KEYS[key]
+        families.add(family)
+        if value is None:
+            continue
+        if isinstance(expected, tuple):
+            if isinstance(value, bool) or not isinstance(value, expected):
+                raise TypeError(
+                    f"{source}.{key} must be a number, got {value!r} ({help_text})"
+                )
+        elif expected is bool:
+            if not isinstance(value, bool):
+                raise TypeError(
+                    f"{source}.{key} must be true or false, got {value!r} "
+                    f"({help_text})"
+                )
+        elif expected is list:
+            if not isinstance(value, list) or not value:
+                raise TypeError(
+                    f"{source}.{key} must be a non-empty list, got {value!r} "
+                    f"({help_text})"
+                )
+            for item in value:
+                if isinstance(item, bool) or not isinstance(item, (int, float)):
+                    raise TypeError(
+                        f"{source}.{key} may only contain numbers, got {item!r}"
+                    )
+        elif not isinstance(value, expected):
+            raise TypeError(
+                f"{source}.{key} must be a {expected.__name__}, got {value!r} "
+                f"({help_text})"
+            )
+        if key in ("strategy",) and value not in ("ladder", "exhaustive"):
+            raise ValueError(
+                f"{source}.{key}={value!r} is not one of 'ladder', 'exhaustive'"
+            )
+        if key == "by" and value not in ("seconds", "cost", "nchi"):
+            raise ValueError(
+                f"{source}.{key}={value!r} is not one of 'seconds', 'cost', 'nchi'"
+            )
+        if key in ("l_max_values",):
+            value = [int(item) for item in value]
+        out[key] = value
+    return out
+
+
+def scan_families(scan: dict) -> set[str]:
+    """Which scan family the keys of ``scan`` belong to (see :data:`SCAN_KEYS`)."""
+    return {SCAN_KEYS[key][0] for key in scan if key in SCAN_KEYS}
 
 
 def validate_siab_config(config: dict, *, source: str = "orbgen preset") -> list[str]:
@@ -229,6 +389,8 @@ class ParamBundle:
     output_root: Path | None
     input_json: Path | None = None
     search_strategy: str = "exhaustive"
+    #: ``input.json["scan"]``: the parameters of ``orbgen.ecutwfc`` / ``orbgen.basis``
+    scan: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     # -- derived -----------------------------------------------------------
@@ -496,7 +658,11 @@ class ConfigLoader:
             )
 
         output_root = static.get("output_dir")
-        workflow, explicit = self._resolve_workflow(abacus_presets, orbgen_presets)
+        scan = canonical_scan_config(
+            self.input_params.get("scan"),
+            source=f"{self.input_json_path}#scan",
+        )
+        workflow, explicit = self._resolve_workflow(abacus_presets, orbgen_presets, scan)
 
         return ParamBundle(
             input_params=self.input_params,
@@ -517,6 +683,7 @@ class ConfigLoader:
                 or static.get("search_strategy")
                 or "exhaustive"
             ),
+            scan=scan,
             warnings=list(self._warnings),
         )
 
@@ -707,7 +874,15 @@ class ConfigLoader:
         self,
         abacus_presets: list[PresetEntry],
         orbgen_presets: list[PresetEntry],
+        scan: dict | None = None,
     ) -> tuple[str, bool]:
+        """``(workflow, explicit)``: the ``workflow`` key, else what the inputs imply.
+
+        ``input.json["workflow"]`` always wins.  Otherwise ``scan`` decides — its keys
+        say which of the two value-selection scans is meant (``ecutwfc_values`` =
+        ``orbgen.ecutwfc``; ``ecutjy_values``/``r_cut_values``/… = ``orbgen.basis``) —
+        and without a ``scan`` section the candidate grid does, as before.
+        """
         explicit = self.input_params.get("workflow")
         if explicit:
             if explicit not in SUPPORTED_WORKFLOWS:
@@ -716,6 +891,19 @@ class ConfigLoader:
                     f"choose one of {list(SUPPORTED_WORKFLOWS)}"
                 )
             return str(explicit), True
+
+        families = scan_families(scan or {})
+        if len(families) > 1:
+            raise ValueError(
+                "input.json['scan'] mixes the keys of two scans "
+                f"({sorted(families)}): the ecutwfc ladder and the basis ladder cannot "
+                "be configured in one run — split them into two input.json files, or "
+                "set 'workflow' explicitly"
+            )
+        if families == {"ecutwfc"}:
+            return WORKFLOW_ECUTWFC, False
+        if families == {"basis"}:
+            return WORKFLOW_BASIS, False
 
         # Auto: a single (l_max, r_cut) candidate needs no search.
         limits = abacus_presets[0].config if abacus_presets else {}

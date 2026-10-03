@@ -200,78 +200,83 @@ aiida-orbgen fetch-dft -i output.json --calc-pk 412925 --dft-root ../run_lmax4_r
 > `orbital_model_required_keys['atomic']`). Written flat they are silently
 > ignored, so `validate_siab_config()` rejects the flat spelling.
 
-### Choosing the parameters: the four WorkChains
+### Choosing the parameters: `input.json` + `aiida-orbgen run`
 
-Before any orbital is produced, four parameters have to be chosen: the plane-wave
+Four parameters have to be chosen before an orbital is produced: the plane-wave
 reference cutoff (`ecutwfc`) and the three parameters of the primitive NSW basis
-(`r_cut`, `l_max`, `ecutjy`). Two WorkChains answer those questions, and both write
-their whole comparison table into the provenance, so the choice can be re-made later
-without rerunning anything.
+(`r_cut`, `l_max`, `ecutjy`).  Two WorkChains answer those questions, and *every*
+parameter of the scan lives in `input.json` under `scan` — the plugin only holds the
+code.  So the route is the same one as for every other run:
 
-| entry point | question | criterion |
-| --- | --- | --- |
-| `orbgen.ecutwfc` | which `ecutwfc` is the PW reference converged at? | the total energy of the reference geometries stops moving between neighbouring cutoffs (`tolerance_meV` per atom) |
-| `orbgen.basis` | which `(r_cut, l_max, ecutjy)` is the cheapest basis that is accurate enough? | `max |E_nsw - E_pw|` per atom over the same geometries, optionally plus the atomization-energy drift against the reference candidate |
+```json
+{
+  "parameters": {"abacus": {"lcao_only": "lcao"}, "orbgen": {"u": "u_14ve"}},
+  "static": { "...": "...", "output_dir": "/scratch/u/scans" },
+  "profile": "aiida_profile",
+  "code": {"abacus": "abacus_lts@yeesuan"},
 
-```python
-from aiida import load_profile, orm
-from aiida.engine import submit
-from aiida.plugins import WorkflowFactory
-
-load_profile()
-
-# 1) converge the PW reference (one ladder, one SIAB tree)
-b = WorkflowFactory("orbgen.ecutwfc").get_builder()
-b.siab_json = orm.SinglefileData(file="orbgen.json")   # geometries + pseudopotential
-b.abacus_config = orm.Dict(dict=abacus_config)
-b.l_max, b.r_cut = orm.Int(4), orm.Float(11.0)         # the basis to reference
-b.ecutwfc_values = orm.List(list=[100.0, 120.0, 150.0, 180.0, 200.0])
-b.output_dir = orm.Str("/scratch/ecutwfc")
-ecutwfc_node = submit(b)          # -> outputs.ecutwfc_decision.chosen
-
-# 2) walk the basis ladder against that reference
-b = WorkflowFactory("orbgen.basis").get_builder()
-b.siab_json = orm.SinglefileData(file="orbgen.json")
-b.abacus_config = orm.Dict(dict=abacus_config)
-b.l_max, b.r_cut = orm.Int(4), orm.Float(12.0)         # reference point (the largest)
-b.reference_ecutjy = orm.Float(150.0)
-b.ecutjy_values = orm.List(list=[125.0, 100.0])        # one super-parameter at a time
-b.l_max_values = orm.List(list=[3])
-b.r_cut_values = orm.List(list=[11.0, 10.0])
-b.ecutwfc = orm.Float(180.0)                           # from step 1
-b.atomization_tolerance_meV = orm.Float(50.0)          # the stricter criterion
-b.output_dir = orm.Str("/scratch/basis")
-basis_node = submit(b)            # -> outputs.chosen_basis, outputs.primitive_orbital
+  "workflow": "orbgen.basis",
+  "scan": {
+    "reference_ecutjy": 150,
+    "ecutjy_values": [125, 100],
+    "l_max_values": [3],
+    "r_cut_values": [11, 10],
+    "ecutwfc": 180,
+    "strategy": "ladder",
+    "by": "seconds",
+    "stop_on_first_pass": true,
+    "atomization_tolerance_meV": 50
+  }
+}
 ```
 
-What the two scans are careful about (all of it is in the reports):
+```bash
+aiida-orbgen check -i input.json            # offline: resolves presets, validates `scan`
+aiida-orbgen run   -i input.json --dry-run  # the plan, including the ladder
+aiida-orbgen run   -i input.json            # submit; writes <input_dir>/output.json
+verdi process report <PK>                   # the ladder, the table, the winner
+```
 
-* **the PW reference is paid for once** -- `orbgen.basis` computes it on the reference
-  tree and reuses it for every candidate, or takes one from an earlier run through the
-  `pw_reference` input. A grid search over `orbgen.calc` would run the same PW children
-  once per candidate, and PW is the expensive side;
-* **the ladder, not the Cartesian product** -- `strategy="ladder"` (default) reduces one
+| entry point | question | `scan` keys | criterion |
+| --- | --- | --- | --- |
+| `orbgen.ecutwfc` | which `ecutwfc` is the PW reference converged at? | `ecutwfc_values` (or `ecutwfc_scale` × `baseline_ecutwfc`), `reference_ecutwfc`, `with_lcao` | the total energy of the reference geometries stops moving between neighbouring cutoffs (`tolerance_meV` per atom) |
+| `orbgen.basis` | which `(r_cut, l_max, ecutjy)` is the cheapest basis that is accurate enough? | `reference_ecutjy`, `ecutjy_values`, `l_max_values`, `r_cut_values`, `strategy`, `ecutwfc`, `by`, `stop_on_first_pass`, `atomization_tolerance_meV`, `pw_reference` / `pw_reference_pk` | `max |E_nsw - E_pw|` per atom over the same geometries, optionally plus the atomization-energy drift against the reference candidate |
+
+The `workflow` key may be omitted: a `scan` section says which scan its keys describe
+(`ecutwfc_values` → `orbgen.ecutwfc`; `ecutjy_values`/`r_cut_values`/… → `orbgen.basis`),
+and keys of both scans in one file are refused rather than guessed.  `l_max` and `r_cut`
+are deliberately **not** in `scan`: they come from the orbgen preset, whose single
+candidate is the *reference point* the ladder reduces from (a preset with several
+`bessel_nao_rcut` values is a grid, not a ladder, and is rejected with that message).
+
+What the two scans are careful about (all of it is visible in the reports):
+
+* **the PW reference is paid for once** — `orbgen.basis` computes it on the reference
+  tree and reuses it for every candidate, or takes it from an earlier cutoff scan via
+  `"pw_reference_pk": <PK>` (which reads the `pw_reference` block of that run's
+  `ecutwfc_decision`) or inline via `"pw_reference"`.  A grid search over `orbgen.calc`
+  would run the same PW children once per candidate, and PW is the expensive side;
+* **the ladder, not the Cartesian product** — `strategy="ladder"` (default) reduces one
   super-parameter at a time (`ecutjy` first, then `l_max`, then `r_cut`), so every
   candidate is cheaper than the point it came from; `strategy="exhaustive"` takes the
   product;
-* **stop at the first passing candidate** (`stop_on_first_pass`, default true): the
-  ladder is cost-ordered, so the first candidate inside the tolerance *is* the cheapest
-  accurate basis -- unless the `atomization_tolerance_meV` gate rejects it, in which case
-  the scan continues and reports the rejection;
-* **cost is measured, not guessed** -- every row carries the wall-clock seconds of its
-  children and the `nchi` proxy, and `by="seconds" | "cost" | "nchi"` chooses what
+* **cheapest first, stop at the first pass** — the reference point meets nothing by
+  construction, so it is evaluated *last* (or first when `atomization_tolerance_meV`
+  needs it as the baseline) and never counts as the reduction: the first candidate inside
+  the tolerance *is* the cheapest accurate basis;
+* **cost is measured, not guessed** — every row carries the wall-clock seconds of its
+  children and the `nchi` proxy, and `by="seconds" | "cost" | "nchi"` sets what
   "cheapest" means;
-* **`r_cut` is checked against the cell** -- an `r_cut` above half the smallest cell edge
-  is refused (exit 410) instead of silently producing two-centre tables for neighbours
-  that cannot exist;
-* `abacus.json`'s `basis` list is ignored by both scans (children are `pw` for the
-  cutoff ladder, `lcao_nsw` against the reference for the basis ladder); the
-  `parameters/abacus/pw.yml` and `lcao_only.yml` presets exist for exactly these two
-  modes.
+* **`r_cut` is checked against the cell** — above half the smallest cell edge the run is
+  refused instead of silently building two-centre tables for neighbours that cannot
+  exist.
 
-Exit codes worth knowing: `409` no candidate inside the tolerance (widen the ladder),
-`407` the `ecutwfc` ladder did not converge, `304` the LCAO check of `orbgen.ecutwfc`
-missed the tolerance, `301` some children failed.
+Outputs are decisions, not orbitals: `ecutwfc_decision` and `basis_decision` (the whole
+table, `evaluation_order`, `reduction_found`) plus `chosen_basis` and the winner's
+`primitive_orbital`.  `aiida-orbgen report` therefore refuses a scan's `output.json` —
+feed the chosen values back into the `input.json` of an `orbgen.calc` run instead.
+(One `input.json` per directory: `run` writes `<input_dir>/output.json`, so pass `-o`
+when several inputs share a directory.)
 
 ### Python API
 
