@@ -48,9 +48,13 @@ from aiida_orbgen.workflows.results import create_dict
 __all__ = ["OrbgenEcutwfcWorkChain", "DEFAULT_ECUTWFC_SCALE"]
 
 #: The ladder used when ``ecutwfc_values`` is not given: multipliers of the baseline
-#: cutoff the SIAB reference was generated at.  The paper's ``E_c`` = 100 Ry is a
-#: *spillage* cutoff, so the reference cutoff of a production fit is usually a multiple
-#: of it -- 1.8x (180 Ry) is where the U reference used here converged to 5.9 meV/atom.
+#: cutoff the SIAB reference was generated at.  Nothing in the *orbital* names betrays
+#: them -- ``U_gga_12au_150Ry_45s45p44d44f43g.orb`` carries ``r_cut`` and ``ecutjy``
+#: (150 Ry there), because those two are what fix the primitive set
+#: (``compute_nbes_per_l``).  The paper's ``E_c`` = 100 Ry is that cutoff, i.e. our
+#: ``ecutjy``, not the plane-wave one; the plane-wave cutoff of the reference DFT only
+#: appears in the ABACUS INPUT.  1.8x (180 Ry) is where the U reference used for this
+#: project converged to 5.9 meV/atom.
 DEFAULT_ECUTWFC_SCALE: tuple[float, ...] = (1.0, 1.25, 1.5, 1.8, 2.0, 2.5, 3.0)
 
 

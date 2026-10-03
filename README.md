@@ -281,6 +281,24 @@ What the two scans are careful about (all of it is visible in the reports):
 
 Where the INPUT of a child comes from (five layers, each one winning over the previous):
 
+Two cutoffs with almost the same name are easy to confuse, and only one of them is in
+the INPUT:
+
+* **`ecutwfc`** (Ry) — the plane-wave cutoff of the reference DFT.  It lives in the
+  ABACUS INPUT, it is what `orbgen.ecutwfc` converges, and it appears in **no** file
+  name.
+* **`ecutjy`** (Ry) — the JY (spherical-wave) fitting cutoff of the primitive basis.
+  It is fixed by `static.siab_config.ecutjy`, it sets how many radial functions fit
+  into `r_cut` (`compute_nbes_per_l(r_cut, ecutjy, l_max)`), and it is the number in
+  the orbital name: `U_gga_<r_cut>au_<ecutjy>Ry_<nzeta>.orb`.  The counts in that name
+  follow from the two parameters, e.g. (12 au, 150 Ry, l_max 4) → `[45, 45, 44, 44,
+  43]` → `U_gga_12au_150Ry_45s45p44d44f43g.orb`.  The paper's `E_c` = 100 Ry is this
+  cutoff.
+
+That is why one `orbgen.ecutwfc` ladder (100…200 Ry) reuses **one** SIAB tree and one
+`.orb`: nothing about the orbital depends on `ecutwfc`, so the same file is handed to
+every child of the ladder (the ABACUS INPUT is what changes).
+
 | layer | source | examples |
 | --- | --- | --- |
 | 1 | SIAB's own INPUT, generated from `static.siab_config` | `ecutwfc`, `nbands` (`geoms[0].nbands`), `nspin`, `smearing_*`, `mixing_*`, `lmaxmax`, `bessel_nao_rcut`, `gamma_only`, `out_wfc_lcao`, plus SIAB defaults (`scf_thr 1e-7`, `scf_nmax 9000`, `ks_solver genelpa`) |
