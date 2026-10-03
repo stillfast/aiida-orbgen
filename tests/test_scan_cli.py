@@ -154,6 +154,36 @@ def _write_input(tmp_path: Path, scan=None, workflow=None, presets=None,
     return path
 
 
+def test_abacus_input_in_static_overrides_the_preset(tmp_path):
+    """Per-run INPUT keys belong in `input.json`, not in a new preset file.
+
+    `static.abacus_input` is merged into the ABACUS INPUT of every child of the run,
+    after the preset — which is where `scf_thr`/`mixing_beta` for a difficult system go
+    now that the scans run on the CLI.
+    """
+    path = _write_input(tmp_path)
+    payload = json.loads(path.read_text())
+    payload["static"]["abacus_input"] = {"scf_thr": 1e-4, "mixing_beta": 0.1,
+                                         "ks_solver": "dav"}
+    path.write_text(json.dumps(payload))
+    bundle = ConfigLoader(path).load_all()
+    resolved = bundle.abacus_presets[0].config["abacus"]["parameters"]["input"]
+    assert resolved["scf_thr"] == 1e-4
+    assert resolved["mixing_beta"] == 0.1
+    assert resolved["ks_solver"] == "dav"
+
+    # ... and it goes through the same validation as a preset
+    payload["static"]["abacus_input"] = {"ecutjy": 150}       # SIAB-only key
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="ecutjy"):
+        ConfigLoader(path).load_all()
+
+    payload["static"]["abacus_input"] = "scf_thr=1e-4"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(TypeError, match="abacus_input"):
+        ConfigLoader(path).load_all()
+
+
 def test_the_cutoff_ladder_selects_the_ecutwfc_workflow(tmp_path):
     bundle = ConfigLoader(_write_input(tmp_path, ECUTWFC_SCAN)).load_all()
     assert bundle.workflow == WORKFLOW_ECUTWFC

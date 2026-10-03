@@ -373,6 +373,41 @@ def test_describe_row_prints_what_the_decision_used():
 # ---------------------------------------------------------------------------
 #  child bookkeeping
 # ---------------------------------------------------------------------------
+def test_every_child_is_submitted_with_the_preset_parameters():
+    """`parameters` is not optional: a child without it silently loses `abacus.json`.
+
+    `build_abacus_child_inputs` merges the preset's `parameters.input` last, so passing
+    `{}` does not mean "no overrides" -- it means the preset is dropped and
+    `apply_input_overrides`' `ks_solver: scalapack_gvx` wins.  `orbgen.basis` did that
+    for every LCAO child (found by reading the INPUT of a real child in the database:
+    it said scalapack_gvx while the workchain input said genelpa).
+    """
+    import inspect
+
+    from aiida_orbgen.workflows._children import submit_child
+
+    signature = inspect.signature(submit_child)
+    assert signature.parameters["parameters"].default is inspect.Parameter.empty
+
+    module = __import__("aiida_orbgen.workflows.basis", fromlist=["basis"])
+    for step in ("submit_candidate_step", "submit_pw_step"):
+        source = inspect.getsource(getattr(module.OrbgenBasisScanWorkChain, step))
+        assert "submit_child(" in source
+        assert "with_input_overrides(options" in source, step
+
+
+def test_with_input_overrides_alone_keeps_the_preset(tmp_path):
+    """The "no override of my own" case still has to carry the preset."""
+    from aiida_orbgen.workflows._children import with_input_overrides
+
+    options = {"parameters": {"input": {"ks_solver": "genelpa", "scf_thr": 1e-4},
+                              "max_iterations": 4}}
+    assert with_input_overrides(options, None) == options["parameters"]
+    merged = with_input_overrides(options, {"ecutwfc": 150})
+    assert merged["input"] == {"ks_solver": "genelpa", "scf_thr": 1e-4, "ecutwfc": 150}
+    assert merged["max_iterations"] == 4
+
+
 def test_geometry_key_does_not_depend_on_the_basis_parameters():
     """SIAB folds r_cut into the folder name; pairing must not."""
     entry = {"proto": "dimer", "pert": 2.8, "folder": "U-dimer-2.80-11au"}

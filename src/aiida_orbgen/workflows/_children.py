@@ -163,9 +163,18 @@ def submit_child(
     dft_entry: Mapping[str, Any],
     basis: str,
     options: Mapping[str, Any],
-    parameters: Mapping[str, Any] | None = None,
+    parameters: Mapping[str, Any],
 ) -> tuple[Any, int]:
     """Submit one ``abacus.base`` child; returns ``(node, n_atoms)``.
+
+    ``parameters`` is **mandatory** and has to come from
+    :func:`with_input_overrides`: it is the ``parameters.input`` of the ``abacus.json``
+    preset, and passing ``{}`` instead does not mean "no overrides" — it silently
+    throws the preset away, so ``apply_input_overrides``' own defaults (``ks_solver:
+    scalapack_gvx``) win.  That is exactly what ``orbgen.basis`` did: its LCAO children
+    ran with ``scalapack_gvx`` while ``abacus.json`` asked for ``genelpa``, and nothing
+    in the report said so.  The same trap catches any ``scf_thr``/``mixing_beta`` a
+    preset sets for a difficult system.
 
     Raises whatever ``build_abacus_child_inputs`` raises (a missing STRU, an
     unreadable INPUT): the caller decides whether that is fatal for the candidate.

@@ -537,7 +537,9 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
         overrides: dict[str, Any] = {}
         if "ecutwfc" in self.inputs:
             overrides["ecutwfc"] = float(self.inputs.ecutwfc.value)
-        parameters = with_input_overrides(options, overrides) if overrides else None
+        # always through with_input_overrides: the preset's parameters.input has to reach
+        # the child whether or not this run adds an override of its own
+        parameters = with_input_overrides(options, overrides)
 
         self.ctx.children_info = []
         n_submitted = 0
@@ -626,6 +628,7 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
             try:
                 node, n_atoms = submit_child(
                     self, dft_entry=dft_entry, basis="lcao_nsw", options=options,
+                    parameters=with_input_overrides(options, None),
                 )
             except Exception as exc:  # noqa: BLE001
                 self.report(

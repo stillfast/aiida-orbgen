@@ -47,6 +47,9 @@ Layout of ``input.json``
     ``pseudo_path`` (absolute path of the UPF; injected as the SIAB
     ``pseudo_dir``), ``metadata`` (a scheduler-options preset name inside
     ``parameters/metadata.yml``), ``output_dir`` (SIAB run root, optional),
+    ``abacus_input`` (ABACUS INPUT keys merged into every child of this run, last word:
+    ``{"scf_thr": 1e-4, "mixing_beta": 0.1}``), ``tolerance_meV`` (the per-run criterion,
+    overriding the preset's),
     ``dft_root`` / ``dft_roots`` (reference DFT trees, used by ``report``),
     ``siab_config`` (an inline SIAB config, see below).
 
@@ -443,6 +446,7 @@ def canonical_abacus_config(
     code: str | None = None,
     options: dict | None = None,
     tolerance_meV: float | None = None,
+    input_extra: dict | None = None,
 ) -> dict:
     """Turn a ``parameters/abacus/*.yml`` preset into the ``abacus.json`` shape.
 
@@ -504,6 +508,21 @@ def canonical_abacus_config(
     )
     if max_iterations is not None:
         config["abacus"]["max_iterations"] = int(max_iterations)
+
+    # `input.json["static"]["abacus_input"]`: the last word on the ABACUS INPUT of every
+    # child of this run -- the per-run counterpart of a preset's `parameters.input`, so a
+    # `scf_thr`/`mixing_beta` for one difficult system does not need a new preset file in
+    # the plugin tree.  It goes through the same validation as a preset (SIAB-only keys
+    # are rejected) because `validate_abacus_input` reads this very dict.
+    if input_extra:
+        if not isinstance(input_extra, dict):
+            raise TypeError(
+                "input.json['static']['abacus_input'] must be an object of ABACUS "
+                f"INPUT keys, got {type(input_extra).__name__}"
+            )
+        config["abacus"]["parameters"]["input"] = _deep_update(
+            input_overrides, input_extra
+        )
 
     config["tolerance_meV"] = float(
         tolerance_meV
@@ -635,6 +654,7 @@ class ConfigLoader:
             # `static.tolerance_meV` wins over the preset's own value; the code
             # default (100 meV/atom) is the fallback in canonical_abacus_config.
             tolerance_meV=static.get("tolerance_meV"),
+            input_extra=static.get("abacus_input"),
         )
         orbgen_presets = self._inline_orbgen_preset(pseudo_path=pseudo_path)
         if orbgen_presets:

@@ -242,6 +242,14 @@ verdi process report <PK>                   # the ladder, the table, the winner
 | `orbgen.ecutwfc` | which `ecutwfc` is the PW reference converged at? | `ecutwfc_values` (or `ecutwfc_scale` × `baseline_ecutwfc`), `reference_ecutwfc`, `with_lcao` | the total energy of the reference geometries stops moving between neighbouring cutoffs (`tolerance_meV` per atom) |
 | `orbgen.basis` | which `(r_cut, l_max, ecutjy)` is the cheapest basis that is accurate enough? | `reference_ecutjy`, `ecutjy_values`, `l_max_values`, `r_cut_values`, `strategy`, `ecutwfc`, `by`, `stop_on_first_pass`, `atomization_tolerance_meV`, `pw_reference` / `pw_reference_pk` | `max |E_nsw - E_pw|` per atom over the same geometries, optionally plus the atomization-energy drift against the reference candidate |
 
+Two more per-run knobs live in `static`, not in a preset file:
+
+* `"static": {"abacus_input": {"scf_thr": 1e-4, "mixing_beta": 0.1}}` — ABACUS INPUT keys
+  merged into **every** child of the run, after the preset (validated like a preset, so
+  an SIAB-only key such as `ecutjy` is still rejected);
+* `"static": {"tolerance_meV": 4.2}` — the criterion itself, overriding the preset's
+  100 meV/atom.
+
 The `workflow` key may be omitted: a `scan` section says which scan its keys describe
 (`ecutwfc_values` → `orbgen.ecutwfc`; `ecutjy_values`/`r_cut_values`/… → `orbgen.basis`),
 and keys of both scans in one file are refused rather than guessed.  `l_max` and `r_cut`
@@ -270,6 +278,25 @@ What the two scans are careful about (all of it is visible in the reports):
 * **`r_cut` is checked against the cell** — above half the smallest cell edge the run is
   refused instead of silently building two-centre tables for neighbours that cannot
   exist.
+
+Where the INPUT of a child comes from (five layers, each one winning over the previous):
+
+| layer | source | examples |
+| --- | --- | --- |
+| 1 | SIAB's own INPUT, generated from `static.siab_config` | `ecutwfc`, `nbands` (`geoms[0].nbands`), `nspin`, `smearing_*`, `mixing_*`, `lmaxmax`, `bessel_nao_rcut`, `gamma_only`, `out_wfc_lcao`, plus SIAB defaults (`scf_thr 1e-7`, `scf_nmax 9000`, `ks_solver genelpa`) |
+| 2 | `apply_input_overrides` | drops the AiiDA-managed keys (`pseudo_dir`, `orbital_dir`, `suffix`, `stru_file`, `kpoint_file`, `wannier_card`, `calculation`, `basis_type`, `bessel_*`) and sets `ks_solver: scalapack_gvx` |
+| 3 | the `parameters.abacus` preset's `parameters.input` | `lcao_only.yml` → `ks_solver: genelpa`; `max_iterations` is a WorkChain retry count, not INPUT |
+| 4 | `input.json`: `static.abacus_input`, and `scan` | `ecutwfc` per ladder value (`orbgen.ecutwfc`); `scan.ecutwfc` for the PW reference children (`orbgen.basis`) |
+| 5 | the WorkChain, per basis | `basis_type` = `lcao`/`pw`; `ks_solver` follows the basis (`genelpa` ↔ `dav`); `out_wfc_lcao` is dropped for PW |
+
+Not in the INPUT, because AiiDA owns them: the structures (STRU), the k-points (Γ-only
+`KpointsData`), the pseudopotential and the orbital (`pseudo_family` = UPF + that
+candidate's primitive `.orb`, injected as `pseudo_dir`/`orbital_dir` +
+`NUMERICAL_ORBITAL`), and the scheduler options (`static.metadata`: queue, MPI procs,
+walltime, memory).  The SIAB-only keys (`abacus_command`, `environment`, `mpi_command`,
+`optimizer`, `max_steps`, `torch.lr`, `nthreads_rcut`, `fit_basis`, `primitive_type`,
+`spill_guess`) never reach a child: they are for SIAB's own DFT runner and the spillage
+fit, which the AiiDA path does not use.
 
 Outputs are decisions, not orbitals: `ecutwfc_decision` and `basis_decision` (the whole
 table, `evaluation_order`, `reduction_found`) plus `chosen_basis` and the winner's
