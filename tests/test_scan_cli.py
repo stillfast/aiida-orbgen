@@ -603,16 +603,30 @@ def test_run_dry_run_plans_a_scan_without_submitting(tmp_path, capsys):
     assert not (tmp_path / "output.json").exists()
 
 
-def test_report_refuses_a_scan_output_json(tmp_path, capsys):
-    """A scan chooses parameters; it has no DFT tree to build an orbital from."""
+def test_report_accepts_a_scan_output_json(tmp_path, monkeypatch, capsys):
+    """A scan's report is its energy table, not an orbital flat (see test_scan_report).
+
+    This used to be a refusal; it now writes `report.md` / `energies.csv` /
+    `decision.json` through the scan renderer (patched here so the test stays offline).
+    """
+    from aiida_orbgen.cli import run as cli_run
+
+    monkeypatch.setattr(
+        "aiida_orbgen.utils.report.scan.write_scan_report",
+        lambda node, out_dir, **kwargs: {"report": Path(out_dir) / kwargs.get(
+            "report_name", "report.md"), "csv": Path(out_dir) / "energies.csv",
+            "json": Path(out_dir) / "decision.json"},
+    )
+    monkeypatch.setattr("aiida.load_profile", lambda *a, **k: None)
+    monkeypatch.setattr("aiida.orm.load_node", lambda identifier: identifier)
     output = tmp_path / "output.json"
     output.write_text(json.dumps({
         "workflow": WORKFLOW_BASIS,
         "abacus": {"orbgen": {"test": "uuid:1234"}},
     }))
-    assert main(["report", "-i", str(output)]) == 1
-    err = capsys.readouterr().err
-    assert "produced a decision, not an orbital flat" in err
+    assert cli_run.main(["report", "-i", str(output), "-o", str(tmp_path / "out")]) == 0
+    out = capsys.readouterr().out
+    assert "energies" in out and "decision" in out
 
 
 def test_the_method_registry_lists_all_four_workflows():

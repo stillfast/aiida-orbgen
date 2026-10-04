@@ -232,18 +232,39 @@ def record_child(
 
 
 def seconds_of(node) -> float | None:
-    """Wall-clock seconds one finished child occupied, from its own timestamps.
+    """Wall-clock seconds one finished child occupied, or ``None`` if it cost nothing.
 
     Summed over the children of a candidate this is the *resource* it used (what the
     queue bills), not the elapsed time of the scan -- the children of one candidate run
-    in parallel, so the elapsed time is roughly the largest of them.  For comparing
-    "what does this basis cost" the sum is the right number, and it is available without
-    reading a single output file.
+    in parallel, so the elapsed time is roughly the largest of them.
+
+    ``None`` means "not measured, and not measurable": a child whose calculation came
+    out of AiiDA's cache did not run at all, so its few seconds of bookkeeping are not a
+    cost.  Reporting them would be worse than reporting nothing -- on 2026-10-04 a
+    re-run of a ladder reused every child of the reference point, the reference then
+    looked like the *cheapest* candidate (18 s against 8846 s), and `pick_cheapest`
+    picked it over the cheaper basis the scan had actually accepted.
     """
+    for candidate in (node, _inner_calculation(node)):
+        if candidate is None:
+            continue
+        try:
+            if candidate.base.caching.is_created_from_cache:
+                return None
+        except Exception:  # noqa: BLE001 -- older nodes may not expose the property
+            pass
     try:
         return float((node.mtime - node.ctime).total_seconds())
     except Exception:  # noqa: BLE001 -- a node without timestamps is not fatal
         return None
+
+
+def _inner_calculation(node):
+    """The ``AbacusCalculation`` of an ``AbacusBaseWorkChain``, if it has one."""
+    for child in getattr(node, "called", []) or []:
+        if child.process_label == "AbacusCalculation":
+            return child
+    return None
 
 
 # ---------------------------------------------------------------------------

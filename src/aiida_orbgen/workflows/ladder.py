@@ -425,29 +425,51 @@ def pick_cheapest(
     by: str = "seconds",
     require_atomization: bool = False,
     atomization_tolerance_meV: float | None = None,
+    reference: str | None = None,
+    reference_is_fallback: bool = True,
 ) -> dict[str, Any] | None:
     """The cheapest candidate that meets the tolerance (``seconds`` or the cost proxy).
 
-    When ``require_atomization`` is set, a candidate additionally has to keep the
-    atomization-energy difference against the reference inside
-    ``atomization_tolerance_meV`` -- the stricter, defect-like criterion.
+    Parameters
+    ----------
+    by
+        ``"seconds"`` (measured resource use), ``"cost"`` or ``"nchi"`` (static proxies).
+        A candidate whose ``seconds`` are unknown (everything came out of AiiDA's cache)
+        is ranked by the ``cost`` proxy instead of by a meaningless few seconds.
+    require_atomization, atomization_tolerance_meV
+        additionally require the atomization-energy difference against the reference to
+        stay inside ``atomization_tolerance_meV`` -- the stricter, defect-like criterion.
+    reference, reference_is_fallback
+        The reference point is the candidate the ladder starts from, i.e. the *most
+        expensive* one; it is the answer only when nothing else is usable.  It was
+        looked up by cost before, which went wrong as soon as its children came from the
+        cache: it then appeared to be the cheapest candidate and was returned as the
+        winner next to a warning that no cheaper candidate had passed -- while one had.
     """
     rows = list(table.get("rows") or [])
-    windows = {
-        "seconds": lambda r: r["seconds"] if r["seconds"] is not None else float("inf"),
-        "cost": lambda r: r["cost"] if r["cost"] is not None else float("inf"),
-        "nchi": lambda r: r["nchi"] if r["nchi"] is not None else float("inf"),
-    }
-    if by not in windows:
-        raise ValueError(f"unknown sort key {by!r}; use one of {sorted(windows)}")
+
+    def window(key: str, row: Mapping[str, Any]) -> float:
+        value = row.get(key)
+        if value is not None:
+            return float(value)
+        if key == "seconds" and row.get("cost") is not None:
+            return float(row["cost"])
+        return float("inf")
+
+    if by not in ("seconds", "cost", "nchi"):
+        raise ValueError(f"unknown sort key {by!r}; use one of ['cost', 'nchi', 'seconds']")
     usable = [r for r in rows if r["tolerance_ok"]]
     if require_atomization and atomization_tolerance_meV is not None:
         usable = [r for r in usable
                   if r["atomization_vs_reference_meV"] is not None
                   and abs(r["atomization_vs_reference_meV"]) <= atomization_tolerance_meV]
+    if reference and reference_is_fallback:
+        others = [r for r in usable if r["label"] != reference]
+        if others:
+            usable = others
     if not usable:
         return None
-    usable.sort(key=lambda r: (windows[by](r), r["dE_max_abs_meV"] or 0.0))
+    usable.sort(key=lambda r: (window(by, r), r["dE_max_abs_meV"] or 0.0))
     return usable[0]
 
 

@@ -362,8 +362,23 @@ fit, which the AiiDA path does not use.
 
 Outputs are decisions, not orbitals: `ecutwfc_decision` and `basis_decision` (the whole
 table, `evaluation_order`, `reduction_found`) plus `chosen_basis` and the winner's
-`primitive_orbital`.  `aiida-orbgen report` therefore refuses a scan's `output.json` —
-feed the chosen values back into the `input.json` of an `orbgen.calc` run instead.
+`primitive_orbital`.
+
+`aiida-orbgen report` on a scan writes the table that scan exists for — the total
+energies of the reference geometries in **both** bases and the difference between them:
+
+```
+report.md      # §1 ΔE/atom per candidate, §2a E_pw, §2b E_pw/E_nsw/ΔE/ΔE-atom,
+               # §3 atomization energies, the winner, the children
+energies.csv   # the same numbers, one row per candidate × geometry
+decision.json  # the decision Dict verbatim
+```
+
+For `orbgen.ecutwfc` the same command renders the cutoff ladder (with the neighbouring
+step of the convergence rule) plus the LCAO-vs-PW block at the reference cutoff.  The
+*contracted* orbitals still come from an `orbgen.calc` run at the chosen point (a scan
+has no reference DFT tree of its own to fit against) — feed `chosen_basis` back into
+`input.json` and report that run.
 (One `input.json` per directory: `run` writes `<input_dir>/output.json`, so pass `-o`
 when several inputs share a directory.)
 

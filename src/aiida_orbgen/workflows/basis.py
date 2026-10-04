@@ -789,6 +789,9 @@ class OrbgenBasisScanWorkChain(OrbgenCalcWorkChain):
         best = pick_cheapest(
             table, by=by, require_atomization=gate is not None,
             atomization_tolerance_meV=gate,
+            # the reference is the ladder's starting point (the most expensive basis):
+            # it is the fallback answer, never the "cheapest" one
+            reference=reference_label, reference_is_fallback=True,
         )
 
         self.report("  " + "-" * 72)

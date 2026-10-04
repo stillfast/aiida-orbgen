@@ -210,6 +210,56 @@ def cmd_run(args) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _report_scans(data: dict, output_json: Path, args) -> int:
+    """``report.md`` for ``orbgen.ecutwfc`` / ``orbgen.basis``.
+
+    A scan produces no orbital flat — there is no reference DFT tree of its own to fit a
+    contraction against — but it *does* produce what such a run is for: the total
+    energies of the reference geometries in two bases and the difference between them.
+    So a scan's report is that table (plus `energies.csv` and the decision dict as
+    JSON); ``orbgen.calc`` runs keep the orbital-building report.
+    """
+    from aiida import load_profile
+    from aiida.orm import load_node
+
+    from aiida_orbgen.utils.report.scan import write_scan_report
+
+    entries = collect_job_entries(data)
+    if not entries:
+        print(f"Error: no WorkChain identifier found in {output_json}", file=sys.stderr)
+        return 1
+    out_dir = (Path(args.output_dir).expanduser() if args.output_dir else Path.cwd()).resolve()
+    try:
+        load_profile(args.profile)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: cannot load an AiiDA profile: {exc}", file=sys.stderr)
+        return 1
+
+    single = len(entries) == 1
+    failures = 0
+    for label, identifier in entries:
+        node_dir = out_dir if single else out_dir / str(identifier)[:8]
+        report_name = "report.md" if single else f"report_{identifier[:8]}.md"
+        try:
+            node = load_node(identifier)
+            paths = write_scan_report(
+                node, node_dir, report_name=report_name, profile=args.profile
+            )
+        except Exception as exc:  # noqa: BLE001 -- one bad node must not hide the rest
+            print(f"  {label}: {exc}", file=sys.stderr)
+            failures += 1
+            continue
+        print(f"  {label} [{str(identifier)[:8]}]: ok -> {paths['report']}")
+        print(f"      energies  : {paths['csv']}")
+        print(f"      decision  : {paths['json']}")
+    if failures:
+        print(f"[report] {failures} run(s) failed", file=sys.stderr)
+        return 1
+    print("[report] a scan report holds the energies and their differences; the "
+          "contracted orbitals come from `orbgen.calc` + `report` at the chosen point")
+    return 0
+
+
 def cmd_report(args) -> int:
     output_json = Path(args.input_json).resolve()
     try:
@@ -218,17 +268,7 @@ def cmd_report(args) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     if data.get("workflow") in SCAN_WORKFLOWS:
-        # `report` builds the final CSW-NAO orbital from a reference DFT tree; a scan
-        # has no tree of its own -- it *chooses* the parameters that run will use.
-        print(
-            f"[report] {output_json} holds a {data['workflow']} run: it produced a "
-            f"decision, not an orbital flat. Read it with `verdi process report <PK>` "
-            f"or `python tools/read_scan.py <PK>`, then feed the chosen values back "
-            f"into the input.json of an `orbgen.calc` run.",
-            file=sys.stderr,
-        )
-        return 1
-
+        return _report_scans(data, output_json, args)
     entries = collect_job_entries(data)
     if not entries:
         print(f"Error: no WorkChain identifier found in {output_json}", file=sys.stderr)
