@@ -48,7 +48,7 @@ parameters/                       # one slot per level, composed by input.json
 │   └── test.yml
 └── scan/                 # level 3: ladder + criterion       (parameters.scan)
     ├── scan.yml          #   generic ladders (pw_cutoff_*, basis_reduce_one_step)
-    └── u_14ve.yml        #   U project: ecutwfc_ladder, basis_ladder
+    └── u_14ve.yml        #   U project: ecutwfc_ladder, basis_ladder_step1/2
 ```
 
 A value-selection run therefore names three presets instead of writing anything
@@ -60,7 +60,7 @@ for that one run:
     "parameters": {
         "abacus": {"lcao_only": "lcao"},
         "orbgen": {"u_14ve": "ref_r12_l4_j150"},
-        "scan":   {"u_14ve": "basis_ladder"}
+        "scan":   {"u_14ve": "basis_ladder_step1"}
     },
     "static": {
         "pseudo_path": "/abs/path/U.pbe-n-nc.UPF",
@@ -242,7 +242,7 @@ code.  So the route is the same one as for every other run:
   "parameters": {
     "abacus": {"lcao_only": "lcao"},              // level 1: LCAO children only
     "orbgen": {"u_14ve": "ref_r12_l4_j150"},      // level 2: the reference point
-    "scan":   {"u_14ve": "basis_ladder"}          // level 3: the ladder + criterion
+    "scan":   {"u_14ve": "basis_ladder_step1"}    // level 3: the ladder + criterion
   },
   "static": {
     "pseudo_path": "/abs/path/U.pbe-n-nc.UPF",    // overrides the preset's pseudo_dir
@@ -259,10 +259,10 @@ code.  So the route is the same one as for every other run:
 ```
 
 The ladder itself lives in the preset tree, so nothing about it is in the caller's
-code — `parameters/scan/u_14ve.yml#basis_ladder` is exactly
+code — `parameters/scan/u_14ve.yml#basis_ladder_step1` is exactly
 
 ```yaml
-basis_ladder:
+basis_ladder_step1:
   reference_ecutjy: 150
   ecutjy_values: [125, 100]
   l_max_values: [3]

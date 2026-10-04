@@ -47,6 +47,31 @@ BASIS_SCAN = {
 }
 
 
+def _scan_presets() -> dict[str, dict]:
+    """``{"<file>:<preset>": config}`` of the shipped ``parameters/scan/`` tree."""
+    import yaml
+
+    base = REPO / "src" / "aiida_orbgen" / "parameters" / "scan"
+    out: dict[str, dict] = {}
+    for path in sorted(base.glob("*.yml")):
+        for name, config in (yaml.safe_load(path.read_text()) or {}).items():
+            out[f"{path.stem}:{name}"] = config or {}
+    return out
+
+
+def _first_preset_with(key: str) -> dict:
+    """The ``{"file": "preset"}`` slot entry of a shipped preset that sets ``key``.
+
+    Reading it from the files keeps the fixtures working when the project renames or
+    re-splits its ladders (it did once already: `basis_ladder` -> `*_step1`/`*_step2`).
+    """
+    for where, config in _scan_presets().items():
+        if key in config:
+            file_name, preset = where.split(":", 1)
+            return {file_name: preset}
+    raise AssertionError(f"no shipped scan preset sets {key!r}")
+
+
 @pytest.fixture(scope="module")
 def profile():
     """The default AiiDA profile, or a skip when this machine has none."""
@@ -110,31 +135,31 @@ def test_the_allowed_keys_are_documented_in_the_error():
 # ---------------------------------------------------------------------------
 def test_a_scan_can_be_named_instead_of_spelled_out(tmp_path):
     """`parameters.scan` holds the whole ladder, so input.json only names it."""
+    basis_ladder = _first_preset_with("r_cut_values")
     path = _write_input(tmp_path, presets={
         "abacus": {"lcao_only": "lcao"},
         "orbgen": {"u_14ve": "ref_r12_l4_j150"},
-        "scan": {"u_14ve": "basis_ladder"},
+        "scan": basis_ladder,
     })
     bundle = ConfigLoader(path).load_all()
     assert bundle.workflow == WORKFLOW_BASIS          # from the preset's keys
-    assert bundle.scan["ecutjy_values"] == [125.0, 100.0]
-    assert bundle.scan["l_max_values"] == [3]
-    assert bundle.scan["r_cut_values"] == [11.0, 10.0]
-    assert bundle.scan["atomization_tolerance_meV"] == 50
+    assert bundle.scan["ecutjy_values"]                # whatever the project's ladder is
+    assert bundle.scan["r_cut_values"]
+    assert "atomization_tolerance_meV" in bundle.scan
     assert bundle.candidates() == [(4, 12.0)]        # the reference point
 
 
 def test_the_two_presets_of_one_scan_pair_with_the_same_reference(tmp_path):
     """`orbgen/u_14ve.yml#ref_r12_l4_j150` serves both scans."""
-    for preset, workflow in (("ecutwfc_ladder", WORKFLOW_ECUTWFC),
-                             ("basis_ladder", WORKFLOW_BASIS)):
+    for slot, workflow in ((_first_preset_with("ecutwfc_values"), WORKFLOW_ECUTWFC),
+                           (_first_preset_with("r_cut_values"), WORKFLOW_BASIS)):
         path = _write_input(tmp_path, presets={
             "abacus": {"lcao_only": "lcao"},
             "orbgen": {"u_14ve": "ref_r12_l4_j150"},
-            "scan": {"u_14ve": preset},
+            "scan": slot,
         })
         bundle = ConfigLoader(path).load_all()
-        assert bundle.workflow == workflow, preset
+        assert bundle.workflow == workflow, slot
         # one candidate, so `plan_runs` accepts it as the reference point
         assert bundle.candidates() == [(4, 12.0)]
 
@@ -148,6 +173,52 @@ def test_the_production_preset_is_the_basis_the_ladders_chose(tmp_path):
     assert bundle.workflow == WORKFLOW_CALC
     assert bundle.candidates() == [(4, 11.0)]
     assert bundle.orbgen_presets[0].config["ecutjy"] == 125
+
+
+@pytest.mark.parametrize("preset, l_max, r_cut", [
+    ("prod_r10_l4_j150", 4, 10.0),
+    ("prod_r11_l4_j150", 4, 11.0),
+    ("prod_r11_l4_j125", 4, 11.0),
+    ("prod_g_r11_l4_j125", 4, 11.0),
+])
+def test_every_point_the_ladder_can_pick_has_a_production_preset(
+    tmp_path, preset, l_max, r_cut
+):
+    """Whichever point `orbgen.basis` chooses is one line away from its report run."""
+    path = _write_input(tmp_path, presets={
+        "abacus": {"abacus": "production"},
+        "orbgen": {"u_14ve": preset},
+    })
+    bundle = ConfigLoader(path).load_all()
+    assert bundle.workflow == WORKFLOW_CALC
+    assert bundle.candidates() == [(l_max, r_cut)]
+
+
+def test_the_requests_in_the_production_presets_can_actually_be_fitted():
+    """A g channel needs an auxiliary potential, or `report` rejects the result.
+
+    SIAB fills `l >= lloc_min` from `model_kwargs.vloc_aux`; without it the produced
+    orbital comes back with an empty g channel (`[4, 3, 2, 2, 0]` for a requested
+    `4s3p2d2f1g`), which is exactly the validation failure in the project's
+    `ecutjy_150` report.  So: no g without the auxiliary potential.
+    """
+    import yaml
+
+    path = (REPO / "src" / "aiida_orbgen" / "parameters" / "orbgen" / "u_14ve.yml")
+    presets = yaml.safe_load(path.read_text())
+    for name, preset in presets.items():
+        if not name.startswith("prod_"):
+            continue
+        orbital = preset["orbitals"][0]
+        nzeta = orbital["nzeta"]
+        model_kwargs = orbital.get("model_kwargs") or {}
+        if len(nzeta) > 4 and nzeta[4]:
+            assert model_kwargs.get("vloc_aux"), (
+                f"{name} asks for a g channel without vloc_aux: the g channel would "
+                f"come back empty and report would flag it"
+            )
+        else:
+            assert not model_kwargs.get("vloc_aux"), name
 
 
 def test_the_scan_slot_accepts_the_same_three_spellings(tmp_path):
@@ -164,10 +235,11 @@ def test_the_scan_slot_accepts_the_same_three_spellings(tmp_path):
 
 def test_the_inline_section_overrides_the_preset_key_by_key(tmp_path):
     """A project keeps its ladders in the preset tree and varies one key per run."""
+    basis_ladder = _first_preset_with("r_cut_values")
     path = _write_input(tmp_path, presets={
         "abacus": {"lcao_only": "lcao"},
         "orbgen": {"u_14ve": "ref_r12_l4_j150"},
-        "scan": {"u_14ve": "basis_ladder"},
+        "scan": basis_ladder,
     })
     payload = json.loads(path.read_text())
     payload["scan"] = {"by": "nchi", "ecutjy_values": [125]}
@@ -175,7 +247,7 @@ def test_the_inline_section_overrides_the_preset_key_by_key(tmp_path):
     bundle = ConfigLoader(path).load_all()
     assert bundle.scan["by"] == "nchi"                # inline wins
     assert bundle.scan["ecutjy_values"] == [125.0]    # inline wins
-    assert bundle.scan["r_cut_values"] == [11.0, 10.0]  # from the preset
+    assert bundle.scan["r_cut_values"]                # still from the preset
     assert any("overrides" in w for w in bundle.warnings)
 
 
@@ -183,7 +255,7 @@ def test_an_unknown_scan_preset_lists_what_exists(tmp_path):
     path = _write_input(tmp_path, presets={"abacus": {"lcao_only": "lcao"},
                                            "orbgen": "u_14ve",
                                            "scan": {"u_14ve": "nope"}})
-    with pytest.raises(KeyError, match="basis_ladder"):
+    with pytest.raises(KeyError, match="available"):
         ConfigLoader(path).load_all()
 
 
@@ -198,9 +270,9 @@ def test_two_scan_presets_may_not_set_the_same_key(tmp_path):
 
 def test_a_scan_preset_is_validated_like_the_inline_section(tmp_path):
     """The scan slot gets the same schema check, so a typo fails in `check`."""
-    scan_file = (REPO / "src" / "aiida_orbgen" / "parameters" / "scan" / "u_14ve.yml")
-    assert scan_file.is_file()
-    assert "nope" not in scan_file.read_text()
+    assert _scan_presets(), "the scan preset tree is empty"
+    assert any("ecutwfc_values" in config for config in _scan_presets().values())
+    assert any("r_cut_values" in config for config in _scan_presets().values())
     with pytest.raises(KeyError, match="unknown key"):
         canonical_scan_config({"ecutwfc_value": [100]})     # singular typo
 

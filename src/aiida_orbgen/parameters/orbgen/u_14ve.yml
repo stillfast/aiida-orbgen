@@ -96,7 +96,148 @@ prod_r11_l4_j125:
       celldm: 35
 
   orbitals:
+    # 4s3p2d2f = 37 orbitals per atom, the contraction this project measured
+    # (+61.7 meV/atom against PW, 38 s vs 143 s per SCF).  No g channel: SIAB can only
+    # fill l >= lloc_min from an *auxiliary* potential, and without `model_kwargs`
+    # below it produces an empty g channel that `report` flags as a validation
+    # failure (`radial functions per l are [4, 3, 2, 2, 0] but the requested scheme
+    # 4s3p2d2f1g needs [4, 3, 2, 2, 1]`).  For a real g, use prod_g_r11_l4_j125.
+    - nzeta: [4, 3, 2, 2]
+      geoms: [0]
+      nbands: "occ"
+      checkpoint: null
+
+  spill_guess: "atomic"
+  optimizer: "scipy.bfgs"
+  max_steps: 10000
+  torch.lr: 0.001
+  nthreads_rcut: 4
+  device: "cpu"
+
+  smearing_method: "gauss"
+  smearing_sigma: "0.02"
+  mixing_type: "broyden"
+  mixing_beta: 0.4
+  mixing_ndim: 12
+
+  abacus_command: "abacus"
+  environment: "ulimit -l unlimited 2>/dev/null; export PATH=/home/liguozhou/install/miniconda3/envs/orbgen/bin:$PATH; export LD_LIBRARY_PATH=/home/liguozhou/install/miniconda3/envs/orbgen/lib:$LD_LIBRARY_PATH; export UCX_TLS=tcp,self,sm; export OMP_NUM_THREADS=1"
+  mpi_command: "mpirun -np 24 --bind-to numa"
+
+# Same contraction with a real g channel: SIAB takes the l >= lloc_min channels from
+# an *auxiliary* potential, so `model_kwargs` has to name one (the same UPF here).
+# Costs one more radial function per atom; `report` then validates 4s3p2d2f1g.
+prod_g_r11_l4_j125:
+  element: "U"
+  pseudo_dir: "/home/liguozhou/abacus/calculations/orbgen/project/u_14ve/U.pbe-n-nc.UPF"
+
+  fit_basis: "jy"
+  ecutwfc: 180
+  ecutjy: 125
+  bessel_nao_rcut: [11.0]
+  primitive_type: "reduced"
+
+  geoms:
+    - proto: "dimer"
+      pertkind: "stretch"
+      pertmags: [2.1, 2.4, 2.8]
+      nbands: 40
+      nspin: 1
+      lmaxmax: 4
+      celldm: 35
+
+  orbitals:
     - nzeta: [4, 3, 2, 2, 1]
+      geoms: [0]
+      nbands: "occ"
+      checkpoint: null
+      model_kwargs:
+        lloc_min: 4
+        vloc_aux: "/home/liguozhou/abacus/calculations/orbgen/project/u_14ve/U.pbe-n-nc.UPF"
+
+  spill_guess: "atomic"
+  optimizer: "scipy.bfgs"
+  max_steps: 10000
+  torch.lr: 0.001
+  nthreads_rcut: 4
+  device: "cpu"
+
+  smearing_method: "gauss"
+  smearing_sigma: "0.02"
+  mixing_type: "broyden"
+  mixing_beta: 0.4
+  mixing_ndim: 12
+
+  abacus_command: "abacus"
+  environment: "ulimit -l unlimited 2>/dev/null; export PATH=/home/liguozhou/install/miniconda3/envs/orbgen/bin:$PATH; export LD_LIBRARY_PATH=/home/liguozhou/install/miniconda3/envs/orbgen/lib:$LD_LIBRARY_PATH; export UCX_TLS=tcp,self,sm; export OMP_NUM_THREADS=1"
+  mpi_command: "mpirun -np 24 --bind-to numa"
+
+# The two other points the ladder can land on, so that whichever `orbgen.basis` picks
+# is one line away from its production run and report.  Same settings, three numbers
+# different (r_cut / ecutjy), and the contraction of prod_r11_l4_j125.
+prod_r10_l4_j150:
+  element: "U"
+  pseudo_dir: "/home/liguozhou/abacus/calculations/orbgen/project/u_14ve/U.pbe-n-nc.UPF"
+
+  fit_basis: "jy"
+  ecutwfc: 180
+  ecutjy: 150
+  bessel_nao_rcut: [10.0]
+  primitive_type: "reduced"
+
+  geoms:
+    - proto: "dimer"
+      pertkind: "stretch"
+      pertmags: [2.1, 2.4, 2.8]
+      nbands: 40
+      nspin: 1
+      lmaxmax: 4
+      celldm: 35
+
+  orbitals:
+    - nzeta: [4, 3, 2, 2]
+      geoms: [0]
+      nbands: "occ"
+      checkpoint: null
+
+  spill_guess: "atomic"
+  optimizer: "scipy.bfgs"
+  max_steps: 10000
+  torch.lr: 0.001
+  nthreads_rcut: 4
+  device: "cpu"
+
+  smearing_method: "gauss"
+  smearing_sigma: "0.02"
+  mixing_type: "broyden"
+  mixing_beta: 0.4
+  mixing_ndim: 12
+
+  abacus_command: "abacus"
+  environment: "ulimit -l unlimited 2>/dev/null; export PATH=/home/liguozhou/install/miniconda3/envs/orbgen/bin:$PATH; export LD_LIBRARY_PATH=/home/liguozhou/install/miniconda3/envs/orbgen/lib:$LD_LIBRARY_PATH; export UCX_TLS=tcp,self,sm; export OMP_NUM_THREADS=1"
+  mpi_command: "mpirun -np 24 --bind-to numa"
+
+prod_r11_l4_j150:
+  element: "U"
+  pseudo_dir: "/home/liguozhou/abacus/calculations/orbgen/project/u_14ve/U.pbe-n-nc.UPF"
+
+  fit_basis: "jy"
+  ecutwfc: 180
+  ecutjy: 150
+  bessel_nao_rcut: [11.0]
+  primitive_type: "reduced"
+
+  geoms:
+    - proto: "dimer"
+      pertkind: "stretch"
+      pertmags: [2.1, 2.4, 2.8]
+      nbands: 40
+      nspin: 1
+      lmaxmax: 4
+      celldm: 35
+
+  orbitals:
+    - nzeta: [4, 3, 2, 2]
       geoms: [0]
       nbands: "occ"
       checkpoint: null

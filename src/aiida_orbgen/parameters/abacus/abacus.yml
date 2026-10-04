@@ -36,6 +36,25 @@ test:
     max_iterations: 4
   tolerance_meV: 100.0
 
+# The reference run that `aiida-orbgen report` needs: both bases.
+#
+# The final CSW-NAO orbital is fitted against the *LCAO* children of this run (the
+# primitive NSW basis is the reference the contraction reproduces), and the *PW*
+# children are what the `Delta E` columns of report.md compare against.  So the
+# production run is always `basis: [pw, lcao_nsw]`, one grid point, no retries beyond
+# the default.
+#
+# No `metadata.options` here on purpose: `static.metadata` (parameters/metadata.yml)
+# then supplies the scheduler options, i.e. the big-memory preset a r_cut >= 11 au
+# LCAO child needs.
+production:
+  basis: [pw, lcao_nsw]
+  parameters:
+    input:
+      ks_solver: scalapack_gvx
+    max_iterations: 4
+  tolerance_meV: 100.0
+
 # Production preset for the 14-valence-electron uranium pseudopotential
 # (U.pbe-n-nc.14ve.UPF). `max_l_max` / `max_r_cut` cap the candidate grid that
 # the orbgen preset contributes.

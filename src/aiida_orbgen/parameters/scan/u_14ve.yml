@@ -22,16 +22,27 @@ ecutwfc_ladder:
   ecutwfc_values: [100, 120, 150, 180, 200]
   with_lcao: true
 
-basis_ladder:
+basis_ladder_step1:
   reference_ecutjy: 150
   ecutjy_values: [125, 100]
   l_max_values: [3]
-  r_cut_values: [11, 10]
-  ecutwfc: 180
+  r_cut_values: [11, 10, 9]
+  ecutwfc: 150
   strategy: ladder
   by: seconds
   stop_on_first_pass: true
-  atomization_tolerance_meV: 50
+  atomization_tolerance_meV: 43.36
+
+basis_ladder_step2:
+  reference_ecutjy: 125
+  ecutjy_values: [125]
+  l_max_values: [4]
+  r_cut_values: [11, 10, 9]
+  ecutwfc: 150
+  strategy: ladder
+  by: seconds
+  stop_on_first_pass: true
+  atomization_tolerance_meV: 43.36
 
 # The same ladder without any reduction: measures the reference point itself
 # (dE/atom of the basis that everything else is compared against).
