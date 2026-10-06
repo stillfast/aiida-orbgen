@@ -74,6 +74,11 @@ KNOWN_SIAB_KEYS = frozenset({
     "max_steps", "nthreads_rcut", "print_every", "verbose", "ftol", "gtol",
     "maxcor", "geoms", "orbitals", "gamma_only", "nspin", "nbands",
     "scf_thr", "scf_nmax", "ks_solver", "ecutrho",
+    # SIAB's internal options: `SIAB/driver/main.py` spreads this mapping into the
+    # job builders (`**kwargs.get('iop', {})`), so e.g.
+    # ``"iop": {"__iop_spill_guess_atomic_nbands__": 40}`` really is read — calling it
+    # an "unknown key SIAB ignores" would send the reader the wrong way.
+    "iop",
 })
 
 MODEL_KWARGS_KEYS = {

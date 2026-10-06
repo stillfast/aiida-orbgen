@@ -390,10 +390,17 @@ def test_every_child_is_submitted_with_the_preset_parameters():
     assert signature.parameters["parameters"].default is inspect.Parameter.empty
 
     module = __import__("aiida_orbgen.workflows.basis", fromlist=["basis"])
-    for step in ("submit_candidate_step", "submit_pw_step"):
-        source = inspect.getsource(getattr(module.OrbgenBasisScanWorkChain, step))
-        assert "submit_child(" in source
-        assert "with_input_overrides(options" in source, step
+    cls = module.OrbgenBasisScanWorkChain
+    # the LCAO children of a candidate are built in `_submit_candidate` (both the serial
+    # and the parallel path go through it), the PW reference in `submit_pw_step`
+    for step in ("_submit_candidate", "submit_pw_step"):
+        source = inspect.getsource(getattr(cls, step))
+        assert "_submit_geometry(" in source, step
+        assert "parameters=" in source, step
+    assert "with_input_overrides(options" in inspect.getsource(cls._submit_candidate)
+    dispatch = inspect.getsource(cls._submit_geometry)
+    assert "submit_child(" in dispatch
+    assert "parameters=parameters" in dispatch
 
 
 def test_with_input_overrides_alone_keeps_the_preset(tmp_path):
@@ -464,6 +471,34 @@ def test_geometries_from_entries_skips_geometries_without_a_pw_energy():
                            energy=-1.0, n_atoms=2)]
     rows = geometries_from_entries(entries, pw_reference={"dimer-2.8": {"energy": -2.0}})
     assert "e_pw" not in rows["r12_l4_j150"]["dimer-9.9"]
+
+
+def test_the_siab_internal_options_block_is_not_called_unknown():
+    """`iop` is how SIAB's own switches are set (e.g. the atomic guess's band count).
+
+    `SIAB/driver/main.py` spreads it into the job builders, so a run that sets
+    ``"iop": {"__iop_spill_guess_atomic_nbands__": 40}`` to silence the AUTOSET warning is
+    doing the right thing — the validator must not tell it the key is ignored.
+    """
+    from aiida_orbgen.spec import OrbgenSpec
+
+    config = {
+        "element": "U", "pseudo_dir": "/tmp/U.upf", "fit_basis": "jy",
+        "ecutwfc": 180, "ecutjy": 150, "bessel_nao_rcut": [10.0],
+        "primitive_type": "reduced",
+        "geoms": [{"proto": "dimer", "pertkind": "stretch", "pertmags": [2.4],
+                   "nbands": 40, "nspin": 1, "lmaxmax": 4, "celldm": 35}],
+        "orbitals": [{"nzeta": [3, 2, 2, 1, 0], "geoms": [0], "nbands": "occ",
+                      "checkpoint": None}],
+        "iop": {"__iop_spill_guess_atomic_nbands__": 40},
+    }
+    warnings = OrbgenSpec.model_validate(config).warnings()
+    assert not [w for w in warnings if "unknown SIAB key" in w]
+
+    # ... while a genuine typo is still reported
+    config["iop2"] = {}
+    warnings = OrbgenSpec.model_validate(config).warnings()
+    assert any("unknown SIAB key" in w and "iop2" in w for w in warnings)
 
 
 def test_a_cached_siab_tree_without_files_is_detected(tmp_path):
@@ -581,7 +616,7 @@ def test_the_pw_reference_is_run_once_not_per_candidate():
     submit_pw = inspect.getsource(module.OrbgenBasisScanWorkChain.submit_pw_step)
     assert 'basis="pw"' in submit_pw
     submit_candidate = inspect.getsource(
-        module.OrbgenBasisScanWorkChain.submit_candidate_step
+        module.OrbgenBasisScanWorkChain._submit_candidate
     )
     assert 'basis="lcao_nsw"' in submit_candidate
     assert '"pw"' not in submit_candidate.replace("lcao_nsw", "")
@@ -598,6 +633,248 @@ def test_the_pw_reference_is_run_once_not_per_candidate():
     looped = {getattr(arg, "attr", "") for arg in loops[0].args}
     assert "submit_candidate_step" in looped
     assert "submit_pw_step" not in looped
+
+
+# ---------------------------------------------------------------------------
+#  the geometries: SIAB's reference tree, or cells named in structure.yml
+# ---------------------------------------------------------------------------
+class _Inputs(dict):
+    """``self.inputs`` as the methods use it: ``"x" in inputs`` *and* ``inputs.x``."""
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+class _FakeBasis:
+    """The methods that decide *what* a basis scan runs on, without an AiiDA run.
+
+    ``structure_step`` stores ``ctx.structure_records`` when ``parameters.structure``
+    named cells; everything downstream has to follow that choice.  The fakes here are
+    what those methods touch -- ``inputs``, ``ctx`` and ``report`` -- so the decision
+    can be tested without a scheduler.
+    """
+
+    _uses_given_structures = OrbgenBasisScanWorkChain._uses_given_structures
+    _atomization_gate = OrbgenBasisScanWorkChain._atomization_gate
+    _geometries = OrbgenBasisScanWorkChain._geometries
+    _check_rcut_fits = OrbgenBasisScanWorkChain._check_rcut_fits
+    _tolerance_meV = OrbgenBasisScanWorkChain._tolerance_meV
+
+    def __init__(self, inputs=None, ctx=None):
+        from types import SimpleNamespace
+
+        self.inputs = _Inputs(inputs or {})
+        self.ctx = SimpleNamespace(abacus_cfg={}, **(ctx or {}))
+        self.reports: list[str] = []
+        self._dry_run = False          # what the real WorkChain sets from `dry_run`
+
+    def report(self, message: str) -> None:
+        self.reports.append(str(message))
+
+
+def _gate_input(value: float = 43.36):
+    from types import SimpleNamespace
+
+    return {"atomization_tolerance_meV": SimpleNamespace(value=value)}
+
+
+def test_the_basis_spec_declares_the_structure_inputs(profile):
+    """`build_workchain_inputs` attaches them, so the spec has to have them."""
+    ports = OrbgenBasisScanWorkChain.spec().inputs
+    assert {"structures_json", "structures"} <= set(ports.keys())
+    # one file per name of structures_json, so the namespace is dynamic
+    assert ports["structures"].dynamic
+
+
+def test_the_outline_stages_the_structures_before_the_children():
+    """`structure_step` has to run before anything submits a child."""
+
+    def _methods(node):
+        """`cls.<name>` references inside one outline, in source order."""
+        if isinstance(node, ast.Attribute) and getattr(node.value, "id", "") == "cls":
+            yield node.attr
+        for child in ast.iter_child_nodes(node):
+            yield from _methods(child)
+
+    tree = ast.parse(_source(BASIS))
+    outline = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "outline"
+    )
+    steps = list(_methods(outline))
+    assert steps.index("siab_step") < steps.index("structure_step")
+    assert steps.index("structure_step") < steps.index("family_step")
+    assert steps.index("family_step") < steps.index("submit_pw_step")
+
+
+def test_given_structures_replace_the_siab_geometries():
+    """`_geometries` is the one place that decides where a child's cell comes from."""
+    fake = _FakeBasis(ctx={
+        "structure_records": [
+            {"name": "fcc", "structure_pk": 1, "n_atoms": 1,
+             "kpoints": {"mesh": [6, 6, 6]}, "nspin": 1, "input": {},
+             "cell_edges_bohr": [8.25, 8.25, 8.25]},
+        ],
+        "siab_info": {"dft": [{"proto": "dimer", "pert": 2.4}]},
+    })
+    given = fake._geometries()
+    assert [entry["name"] for entry in given] == ["fcc"]
+    assert given[0]["kind"] == "structure"
+    assert given[0]["structure_pk"] == 1
+
+    fake.ctx.structure_records = []
+    siab = fake._geometries()
+    assert [entry["name"] for entry in siab] == ["dimer-2.4"]
+    assert siab[0]["kind"] == "siab"
+    # ... and a candidate's own SIAB tree wins over the reference one: its folders carry
+    # that candidate's r_cut/ecutjy, and the child is built from them
+    own = fake._geometries({"dft": [{"proto": "dimer", "pert": 2.1},
+                                    {"proto": "dimer", "pert": 2.4}]})
+    assert [entry["name"] for entry in own] == ["dimer-2.1", "dimer-2.4"]
+
+
+def test_the_atomization_gate_is_dropped_for_given_cells():
+    """Those cells have no monomer, so the gate could only reject every candidate."""
+    fake = _FakeBasis(_gate_input(), ctx={})
+    assert fake._atomization_gate() == 43.36
+    assert not fake.reports
+
+    fake = _FakeBasis({"structures_json": object(), **_gate_input()}, ctx={})
+    assert fake._atomization_gate() is None
+    assert fake.ctx.atomization_gate_ignored == 43.36
+    assert any("atomization" in line for line in fake.reports)
+    n_reports = len(fake.reports)
+    fake._atomization_gate()                    # said once, not once per call
+    assert len(fake.reports) == n_reports
+
+
+def test_the_rcut_check_warns_for_given_cells_and_refuses_for_siab_ones():
+    """A cell of the user's own choosing is reported, not vetoed (sc is 5.2 au wide)."""
+    from types import SimpleNamespace
+
+    siab = _FakeBasis({"r_cut": SimpleNamespace(value=10.0)}, ctx={
+        "siab_info": {"dft": []},
+    })
+    # no SIAB geometry carries a STRU path -> nothing to check, nothing to complain about
+    assert siab._check_rcut_fits() is None
+
+    given = _FakeBasis({"r_cut": SimpleNamespace(value=10.0),
+                        "structures_json": object()}, ctx={})
+    # the cells are checked in `structure_step`, which has them; this step must not
+    # refuse a scan over structure.yml before those cells are even read
+    assert given._check_rcut_fits() is None
+
+
+@pytest.mark.parametrize("kind", ["symmetry", "file", "node", "bare"])
+def test_the_workflow_can_build_a_cell_it_was_not_handed(profile, tmp_path, kind):
+    """`structure_step` is usable without the CLI: all four ways in end as a cell.
+
+    A cell reaches the step as a `StructureData` (what the CLI passes for a
+    symmetry-declared or stored cell), as a `SinglefileData` (a `file:` entry, staged
+    under `<output_dir>/structures/<name>/`), or as nothing at all — then it is built
+    here, which is what keeps the workflow usable from `verdi run` and from a test.
+    """
+    from aiida.orm import SinglefileData, StructureData
+
+    from aiida_orbgen.utils.structure import build_structure, write_cif
+    from aiida_orbgen.workflows._children import materialise_structure
+
+    entry = {"name": "sc", "kind": kind, "kpoints": {"mesh": [2, 2, 2]}, "nspin": 1,
+             "input": {}, "source": "test"}
+    node = None
+    if kind == "symmetry":
+        entry.update({"spacegroup": 221, "elements": ["U"], "wickoff_position": ["a"],
+                      "x": [2.7501]})
+    elif kind == "file":
+        cif = write_cif("sc", output_dir=tmp_path)
+        entry["file"] = str(cif)
+        node = SinglefileData(file=str(cif))
+    elif kind == "node":
+        stored = StructureData(ase=build_structure("sc")).store()
+        entry["kind"] = "node"
+        entry["pk"] = stored.pk
+    else:  # "bare": a symmetry declaration with no node passed, built in the daemon
+        entry.update({"spacegroup": 221, "elements": ["U"], "wickoff_position": ["a"],
+                      "x": [2.7501]})
+
+    structure, info = materialise_structure(entry, node, root=tmp_path / "structures")
+    assert isinstance(structure, StructureData)
+    assert len(structure.get_ase()) == 1
+    assert structure.pk is not None
+    assert info["source"]
+    assert info["built"] is (kind != "node")     # a stored node is never rebuilt
+    if kind == "file":
+        assert (tmp_path / "structures" / "sc").is_dir()   # the cell the run used is kept
+        assert info["staged"] and Path(info["staged"]).is_file()
+
+
+def test_the_submission_steps_do_not_build_cells_themselves():
+    """Both loops go through `_submit_geometry`, so both work on either source."""
+    module = __import__("aiida_orbgen.workflows.basis", fromlist=["basis"])
+    cls = module.OrbgenBasisScanWorkChain
+    for name in ("submit_pw_step", "_submit_candidate"):
+        source = inspect.getsource(getattr(cls, name))
+        assert "self._geometries(" in source, name
+        assert "_submit_geometry(" in source, name
+        assert "submit_child(" not in source, name
+
+
+def test_a_grid_submits_every_candidate_at_once():
+    """`stop_on_first_pass: false` = nothing to wait for: submit the whole grid.
+
+    The ladder waits for each candidate because a *passing* one ends the scan; a grid
+    that evaluates every candidate has no such reason, and one-at-a-time costs the sum
+    of the per-candidate wall clocks instead of the maximum.
+    """
+    from types import SimpleNamespace
+
+    fake = _FakeBasis({}, ctx={"candidates": [{"r_cut": 9.0, "l_max": 3,
+                                               "ecutjy": 100.0}]})
+    predicate = OrbgenBasisScanWorkChain.submits_every_candidate
+    # nothing said: the workflow's own default is the serial ladder
+    assert predicate(fake) is False
+    fake.inputs = _Inputs({"stop_on_first_pass": SimpleNamespace(value=True)})
+    assert predicate(fake) is False
+    fake.inputs = _Inputs({"stop_on_first_pass": SimpleNamespace(value=False)})
+    assert predicate(fake) is True
+    # an explicit `submit_all` decides, whatever the ladder flag says
+    fake.inputs = _Inputs({"submit_all": SimpleNamespace(value=False),
+                           "stop_on_first_pass": SimpleNamespace(value=False)})
+    assert predicate(fake) is False
+    fake.inputs = _Inputs({"submit_all": SimpleNamespace(value=True),
+                           "stop_on_first_pass": SimpleNamespace(value=True)})
+    assert predicate(fake) is True
+    # ... and a dry run never submits anything
+    fake.inputs = _Inputs({"submit_all": SimpleNamespace(value=True)})
+    fake._dry_run = True
+    assert predicate(fake) is False
+    assert "submit_all" in OrbgenBasisScanWorkChain.spec().inputs
+
+
+def test_the_outline_has_both_a_grid_branch_and_a_ladder_branch():
+    tree = ast.parse(_source(BASIS))
+    conditionals = [node for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and getattr(node.func, "id", "") == "if_"]
+    # the PW reference plus the grid/ladder choice
+    assert len(conditionals) >= 2
+    attributes = {getattr(arg, "attr", "") for call in conditionals for arg in call.args}
+    assert "submits_every_candidate" in attributes
+    # the two branches: the grid one is the `if_(...)(...)` body, the ladder one the
+    # `else_`, so both step names are in the source of the outline
+    source = _source(BASIS)
+    for name in ("submit_all_candidates_step", "evaluate_all_candidates_step",
+                 "submit_candidate_step", ".else_("):
+        assert name in source, name
+    # the loop over candidates stays *inside* the else-branch: one loop, as before
+    loops = [node for node in ast.walk(tree)
+             if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Call)
+             and getattr(node.func.func, "id", "") == "while_"]
+    assert len(loops) == 1
 
 
 def test_the_ecutwfc_run_replaces_the_child_submission_and_the_analysis():
