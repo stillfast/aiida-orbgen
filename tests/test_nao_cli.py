@@ -109,6 +109,74 @@ def test_a_config_from_another_point_is_refused():
     assert any("bessel_nao_rcut" in problem for problem in problems)
 
 
+def test_a_self_referencing_checkpoint_is_refused():
+    """`checkpoint` is the index of the entry whose result is the starting point.
+
+    The reference file (`project/test/pbe/pbe_orbgen.json`) writes `checkpoint: 0` on its
+    *second* entry; writing the entry's own index there is a self-reference that SIAB's
+    cascade cannot order.
+    """
+    config = {"orbitals": [
+        {"nzeta": [3, 2, 2, 1, 0], "checkpoint": None},
+        {"nzeta": [4, 3, 3, 2, 0], "checkpoint": 1},      # itself
+        {"nzeta": [4, 3, 3, 2, 1], "checkpoint": 2},      # itself
+    ]}
+    problems = config_problems(config, l_max=4, r_cut=11.0)
+    backwards = [p for p in problems if "does not point backwards" in p]
+    assert len(backwards) == 2
+    assert "checkpoint=1" in backwards[0] and "starting point" in backwards[0]
+
+    # a forward reference and a nonsense value are refused the same way
+    forward = {"orbitals": [{"nzeta": [1], "checkpoint": 1},
+                            {"nzeta": [1], "checkpoint": None}]}
+    assert any("does not point backwards" in p
+               for p in config_problems(forward, l_max=4, r_cut=11.0))
+    weird = {"orbitals": [{"nzeta": [1], "checkpoint": "0"}]}
+    assert any("is not an entry index" in p
+               for p in config_problems(weird, l_max=4, r_cut=11.0))
+
+
+def test_a_chain_that_would_shrink_is_refused_before_it_runs():
+    """SIAB's checkpoint copies radial functions, so a shrinking step dies mid-run.
+
+    `[3,2,2,1] -> [2,2,1,1]` is exactly what produced `ValueError: axes don't match
+    array` on 2026-10-06, after the first entry had already been optimised.
+    """
+    shrinking = {"bessel_nao_rcut": [11.0], "geoms": [{"lmaxmax": 4}],
+                 "orbitals": [{"nzeta": [3, 2, 2, 1], "checkpoint": None},
+                              {"nzeta": [2, 2, 1, 1], "checkpoint": 0}]}
+    problems = config_problems(shrinking, l_max=4, r_cut=11.0)
+    assert any("would shrink" in p and "axes don't match" in p for p in problems)
+
+    growing = {"bessel_nao_rcut": [11.0],
+               "geoms": [{"lmaxmax": 4}],
+               "orbitals": [{"nzeta": [2, 2, 1, 1], "checkpoint": None},
+                            {"nzeta": [3, 2, 2, 1], "checkpoint": 0}]}
+    assert config_problems(growing, l_max=4, r_cut=11.0) == []
+
+
+def test_a_flat_vloc_aux_is_refused_with_the_fix_in_the_message():
+    """SIAB reads `lloc_min`/`vloc_aux` only from `model_kwargs` (orb_jy.py, api.py)."""
+    flat = {"orbitals": [{"nzeta": [4, 3, 3, 2, 1], "checkpoint": None,
+                          "lloc_min": 4, "vloc_aux": "/tmp/U.upf"}]}
+    problems = [p for p in config_problems(flat, l_max=4, r_cut=11.0)
+                if "vloc_aux" in p]
+    assert len(problems) == 1
+    assert "model_kwargs.vloc_aux" in problems[0]
+    assert "written flat (vloc_aux, lloc_min)" in problems[0]
+    assert "nest it under model_kwargs" in problems[0]
+
+    nested = {"orbitals": [{"nzeta": [4, 3, 3, 2, 1], "checkpoint": None,
+                            "model_kwargs": {"lloc_min": 4, "vloc_aux": "/tmp/U.upf"}}]}
+    assert not [p for p in config_problems(nested, l_max=4, r_cut=11.0)
+                if "vloc_aux" in p]
+
+    # no l>=4 channel requested means vloc_aux is not needed
+    no_g = {"orbitals": [{"nzeta": [4, 3, 2, 2, 0], "checkpoint": None}]}
+    assert not [p for p in config_problems(no_g, l_max=4, r_cut=11.0)
+                if "vloc_aux" in p]
+
+
 def test_the_entries_are_described_including_the_g_trap():
     config = {"orbitals": [
         {"nzeta": [3, 2, 2, 1], "nbands": "occ", "checkpoint": None},

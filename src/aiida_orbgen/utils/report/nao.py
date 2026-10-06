@@ -123,13 +123,44 @@ def describe_entries(config: dict) -> list[str]:
     return lines
 
 
+def _chain_compatible(previous: list[int], nzeta: list[int]) -> bool:
+    """Can an entry asking for ``nzeta`` start from one that fitted ``previous``?
+
+    SIAB's checkpoint copies the previous entry's radial functions per ``l``; a step that
+    asks for fewer (or drops an ``l``) makes the arrays disagree and
+    ``SIAB/orb/cascade.py`` raises ``ValueError: axes don't match array`` — after the
+    previous entry has already been optimised.
+    """
+    width = max(len(previous), len(nzeta))
+    padded_previous = list(previous) + [0] * (width - len(previous))
+    padded_nzeta = list(nzeta) + [0] * (width - len(nzeta))
+    return all(new >= old for new, old in zip(padded_nzeta, padded_previous))
+
+
+def _entry_nzeta(entry: dict) -> list[int]:
+    return [int(value or 0) for value in (entry.get("nzeta") or [])]
+
+
 def config_problems(config: dict, *, l_max: int, r_cut: float) -> list[str]:
     """Why this config cannot be fitted against that tree (empty when it can).
 
-    The fit reads the tree's folders and primitive orbital, so anything that would make
-    SIAB look for a *different* primitive (``bessel_nao_rcut`` / ``ecutjy`` /
-    ``lmaxmax``) turns a minute-long fit into a fresh reference DFT.  Better to say so
-    than to let a run quietly recompute DFT.
+    Everything a run of this command got wrong at least once is checked here, because
+    each of them fails late and expensively:
+
+    * a different primitive than the tree's (``bessel_nao_rcut`` / ``lmaxmax``) turns a
+      minute-long fit into a fresh reference DFT;
+    * a ``checkpoint`` that does not point *backwards* (the value is the index of the
+      entry whose result is used as the starting point, so ``checkpoint: 1`` on entry 1
+      is a self-reference — ``project/test/pbe/pbe_orbgen.json`` writes ``0`` on its
+      second entry);
+    * a chain step that would *shrink* a scheme: SIAB's checkpoint copies the previous
+      entry's radial functions, so ``[3,2,2,1] -> [2,2,1,1]`` dies inside
+      ``SIAB/orb/cascade.py`` with ``ValueError: axes don't match array``, after the
+      previous entry has been optimised;
+    * a requested ``l >= 4`` channel without ``model_kwargs.vloc_aux``: SIAB reads
+      ``lloc_min`` / ``vloc_aux`` only from that block (``SIAB/orb/orb_jy.py``,
+      ``SIAB/orb/api.py``), so a flat spelling is silently ignored and the channel comes
+      out empty (``per l are [4, 3, 3, 2, 0]`` for a requested ``4s3p3d2f1g``).
     """
     problems: list[str] = []
     from aiida_orbgen.interfaces.nsw import folder_rcut
@@ -149,8 +180,46 @@ def config_problems(config: dict, *, l_max: int, r_cut: float) -> list[str]:
             f"the config's lmaxmax={configured_l_max} does not match l_max={l_max} of "
             f"the reference tree"
         )
-    if not (config.get("orbitals") or []):
+    orbitals = list(config.get("orbitals") or [])
+    if not orbitals:
         problems.append("the config has no orbitals entry to fit")
+
+    for index, entry in enumerate(orbitals):
+        nzeta = _entry_nzeta(entry)
+        scheme = "".join(f"{count}{'spdfghik'[l]}" for l, count in enumerate(nzeta)) or "?"
+        if any(count > 0 for count in nzeta[4:]):
+            model_kwargs = entry.get("model_kwargs") or {}
+            if not model_kwargs.get("vloc_aux"):
+                flat = [key for key in ("vloc_aux", "lloc_min") if key in entry]
+                problems.append(
+                    f"orbitals[{index}] ({scheme}) asks for an l>=4 channel without "
+                    f"model_kwargs.vloc_aux, so that channel would come out empty"
+                    + (f" — it is written flat ({', '.join(flat)}), where SIAB ignores "
+                       f"it; nest it under model_kwargs" if flat else "")
+                )
+        checkpoint = entry.get("checkpoint")
+        if checkpoint is None:
+            continue
+        if not isinstance(checkpoint, int) or isinstance(checkpoint, bool):
+            problems.append(
+                f"orbitals[{index}]: checkpoint={checkpoint!r} is not an entry index "
+                f"(use null, or the index of an earlier entry)"
+            )
+            continue
+        if checkpoint >= index:
+            problems.append(
+                f"orbitals[{index}] ({scheme}): checkpoint={checkpoint} does not point "
+                f"backwards (entry {checkpoint} is this entry or a later one; the value "
+                f"is the index of the entry whose result is the starting point)"
+            )
+            continue
+        previous = _entry_nzeta(orbitals[checkpoint])
+        if not _chain_compatible(previous, nzeta):
+            problems.append(
+                f"orbitals[{index}] ({scheme}): checkpoint={checkpoint} would shrink "
+                f"that entry's radial functions, which SIAB cannot do "
+                f"(ValueError: axes don't match array)"
+            )
     return problems
 
 
