@@ -210,6 +210,129 @@ def cmd_run(args) -> int:
 # ---------------------------------------------------------------------------
 
 
+def cmd_nao(args) -> int:
+    """``aiida-orbgen nao`` — contract one NSW reference into NAO(s).
+
+    The reference run (`orbgen.calc`) is the expensive half; this fits SIAB's spillage
+    against its DFT results and writes the contracted orbitals.  Several schemes come
+    out of **one** fit when the orbgen config's `orbitals` is a list (one entry per
+    scheme), which is what `--config` is for; without it the run's own config is written
+    to `<out>/orbgen.json` and used, so the `orbitals` list is always a file you can see
+    and edit before the next run.
+    """
+    from aiida import load_profile
+    from aiida.orm import load_node
+
+    from aiida_orbgen.utils.report.nao import (
+        config_for_node,
+        config_problems,
+        describe_entries,
+        render_summary,
+        summarise_outcome,
+        write_config,
+    )
+
+    output_json = Path(args.input_json).resolve()
+    try:
+        data = read_output_json(output_json)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    entries = collect_job_entries(data)
+    if not entries:
+        print(f"Error: no WorkChain identifier found in {output_json}", file=sys.stderr)
+        return 1
+    out_dir = (Path(args.output_dir).expanduser() if args.output_dir else Path.cwd()).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        load_profile(args.profile)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: cannot load an AiiDA profile: {exc}", file=sys.stderr)
+        return 1
+
+    failures = 0
+    outcomes = []
+    for label, identifier in entries:
+        node = load_node(identifier)
+        if node.process_label != "OrbgenCalcWorkChain":
+            print(f"  {label}: skipped - {node.process_label} is not an NSW reference "
+                  f"(`orbgen.calc`); use `run` for the other workflows", file=sys.stderr)
+            failures += 1
+            continue
+        info = node.outputs.siab_info.get_dict()
+        l_max, r_cut = int(info["lmax"]), float(info["rcut"])
+        config, source = config_for_node(node, siab_config=args.config)
+        print(f"[nao] {label} [{str(identifier)[:8]}]: l_max={l_max}, r_cut={r_cut:g} au, "
+              f"primitive {info.get('nsw_filename')}")
+        print(f"[nao] config from: {source}")
+        problems = config_problems(config, l_max=l_max, r_cut=r_cut)
+        if problems:
+            for problem in problems:
+                print(f"  ERROR: {problem}", file=sys.stderr)
+            failures += 1
+            continue
+
+        node_dir = out_dir if len(entries) == 1 else out_dir / str(identifier)[:8]
+        config_path = Path(args.config).expanduser() if args.config \
+            else write_config(config, node_dir / "orbgen.json")
+        if not args.config:
+            print(f"[nao] wrote the run\'s own config -> {config_path} "
+                  f"(edit its `orbitals` list to fit other schemes)")
+        print(f"[nao] {len(config['orbitals'])} scheme(s) in this config:")
+        for line in describe_entries(config):
+            print(f"      {line}")
+        dft_root = args.dft_root or Path(info["config_path"]).parent
+        print(f"[nao] reference DFT tree: {dft_root} "
+              f"({'ok' if Path(dft_root).is_dir() else 'MISSING'})")
+        if args.dry_run:
+            print("[nao] --dry-run: no fit started")
+            continue
+
+        result, status = generate_one_report(
+            identifier,
+            node_dir,
+            profile=args.profile,
+            report_name="report.md",
+            export_orbitals=True,
+            run_final_orbital=True,
+            dft_root=dft_root,
+            run_missing="all" if args.force else "monomer",
+            redo_final_orbital=args.redo,
+            siab_config=config_path,
+            dry_run=False,
+        )
+        if result is None:
+            print(f"  {label}: {status}", file=sys.stderr)
+            failures += 1
+            continue
+        for final in result.final_orbitals:
+            final.setdefault("node_pk", result.node_pk)
+            outcome = summarise_outcome(config, final, node_dir)
+            outcome.config_path = config_path
+            outcome.config_source = source
+            outcome.warnings.extend(result.warnings)
+            outcomes.append(outcome)
+            for entry in outcome.entries:
+                print(f"      [{entry['index']}] {entry['scheme']:<12} "
+                      + ("OK" if entry["ok"] else f"FAILED {entry['reason']}")
+                      + (f"  spillage={entry['spillage']:.4e}" if entry["spillage"] else ""))
+
+    if outcomes:
+        table = render_summary(outcomes)
+        table_path = out_dir / "nao.md"
+        table_path.write_text(table, encoding="utf-8")
+        print()
+        print(table, end="")
+        print(f"[nao] table -> {table_path}")
+        if not all(outcome.ok for outcome in outcomes):
+            failures += 1
+    if failures:
+        print(f"[nao] {failures} run(s) did not produce usable orbitals", file=sys.stderr)
+        return 1
+    print("[nao] done - the contracted orbitals are next to report.md")
+    return 0
+
+
 def _report_scans(data: dict, output_json: Path, args) -> int:
     """``report.md`` for ``orbgen.ecutwfc`` / ``orbgen.basis``.
 
@@ -719,7 +842,41 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Omit the `verdi process report` dumps from report.md.")
     p_report.add_argument("--dry-run", action="store_true",
                           help="Prepare everything but do not execute the spillage step.")
+    # -- nao ---------------------------------------------------------------
+    p_nao = sub.add_parser(
+        "nao",
+        help="Contract one NSW reference into NAO(s) with a given orbgen config.",
+        description=(
+            "Fit SIAB's spillage against an `orbgen.calc` reference run (the expensive "
+            "NSW step) and write the contracted orbitals.  The orbgen config's "
+            "`orbitals` list may hold several schemes (one NAO each, fitted in the same "
+            "pass); pass --config to choose them, or the run's own config is written to "
+            "<out>/orbgen.json and used.  No DFT is submitted: the reference tree is "
+            "read (assemble/fetch it with `report` or `fetch-dft` first)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_nao.add_argument("-i", "--input", dest="input_json", required=True,
+                       help="output.json of the orbgen.calc (NSW) run.")
+    p_nao.add_argument("-c", "--config", default=None, type=Path,
+                       help="orbgen config (JSON) whose `orbitals` list to fit; "
+                            "default: the config stored on the run, written to "
+                            "<out>/orbgen.json.")
+    p_nao.add_argument("-o", "--output-dir", dest="output_dir", default=".", type=Path,
+                       help="Where to write report.md + the orbitals (default: cwd).")
+    p_nao.add_argument("--dft-root", dest="dft_root", default=None, type=Path,
+                       help="Reference DFT tree (default: the point's own output_dir).")
+    p_nao.add_argument("-p", "--profile", default=None, help="AiiDA profile.")
+    p_nao.add_argument("--redo", action="store_true",
+                       help="Refit even when the orbital files are newer than the tree.")
+    p_nao.add_argument("--force", action="store_true",
+                       help="Also recompute reference data SIAB finds missing.")
+    p_nao.add_argument("--dry-run", action="store_true",
+                       help="Print the config and the schemes, start no fit.")
+
     p_report.set_defaults(func=cmd_report)
+
+    p_nao.set_defaults(func=cmd_nao)
 
     # ── fetch-dft ────────────────────────────────────────────────────────
     p_fetch = sub.add_parser(
