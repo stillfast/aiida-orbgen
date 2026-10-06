@@ -59,13 +59,26 @@ def read_orbital(path: str | Path) -> dict:
 def scheme_of_name(path: str | Path, schemes) -> list[int] | None:
     """Which requested ``nzeta`` scheme a file name refers to, if any.
 
-    SIAB names the file after the scheme (``…_4s3p2d2f1g.orb``), so the match is
-    exact and order-insensitive.
+    SIAB names the file after the scheme (``…_4s3p2d2f1g.orb``), so the name of the
+    scheme is the **last** component of the stem.  The match has to respect that: a
+    plain substring test reported ``4s3p2d2f1g.orb`` as the *shorter* scheme
+    ``4s3p2d2f`` whenever both were requested — and then called a perfectly good file a
+    failure (``radial functions per l are [4, 3, 3, 2, 1] but the requested scheme
+    4s3p2d2f needs [4, 3, 3, 2, 0]``, on 2026-10-06, for a fit that had in fact produced
+    exactly what was asked).  Suffix first, and among matches the longest one, which also
+    keeps names reshaped by SIAB's ``filename`` override working.
     """
     name = Path(path).name
-    for scheme in schemes:
-        if nzeta_string(scheme) and nzeta_string(scheme) in name:
-            return list(scheme)
+    stem = Path(name).stem
+    candidates = [(list(scheme), nzeta_string(scheme)) for scheme in schemes]
+    candidates = [(scheme, text) for scheme, text in candidates if text]
+    for exact_only in (True, False):
+        matches = [
+            (scheme, text) for scheme, text in candidates
+            if stem.endswith("_" + text) or (not exact_only and text in name)
+        ]
+        if matches:
+            return max(matches, key=lambda item: len(item[1]))[0]
     return None
 
 

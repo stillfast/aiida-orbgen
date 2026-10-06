@@ -182,6 +182,29 @@ def _scan_report() -> ScanReport:
     )
 
 
+def test_a_scheme_that_is_a_prefix_of_another_is_not_confused_with_it():
+    """`4s3p3d2f` is a prefix of `4s3p3d2f1g`, and the file name ends with the scheme.
+
+    A substring match reported `…_4s3p3d2f1g.orb` as the *shorter* scheme whenever both
+    were requested, so a fit that had produced exactly what was asked was called a
+    failure (`radial functions per l are [4, 3, 3, 2, 1] but the requested scheme
+    4s3p3d2f needs [4, 3, 3, 2, 0]`).
+    """
+    from aiida_orbgen.utils.report.validate import nzeta_string, scheme_of_name
+
+    schemes = [[3, 2, 2, 1, 0], [4, 3, 3, 2, 0], [4, 3, 3, 2, 1]]
+    for name in ("U_gga_10au_150Ry_3s2p2d1f.orb", "U_gga_10au_150Ry_4s3p3d2f.orb",
+                 "U_gga_10au_150Ry_4s3p3d2f1g.orb"):
+        expected = [scheme for scheme in schemes if nzeta_string(scheme) in name]
+        assert scheme_of_name(name, schemes) == max(
+            expected, key=lambda scheme: len(nzeta_string(scheme))
+        ), name
+
+    # a name reshaped by SIAB's `filename` override still resolves, longest match first
+    assert scheme_of_name("custom_4s3p3d2f1g_thing.orb", schemes) == [4, 3, 3, 2, 1]
+    assert scheme_of_name("nothing_requested.orb", schemes) is None
+
+
 def test_the_report_prints_the_energies_and_their_differences():
     text = render_scan_report(_scan_report())
     assert "## 1. Energy difference per candidate (meV/atom)" in text
@@ -208,6 +231,154 @@ def test_the_report_marks_the_gate_and_the_stored_decision_disagreement():
     text = render_scan_report(data)
     assert "*gate*" in text
     assert "**chosen**" in text
+
+
+def _structure_report() -> ScanReport:
+    """The same scan on the cells of `parameters.structure` (no monomer at all)."""
+    geometries = ["bcc", "sc"]
+    cells = {
+        "pw::bcc": {"n_atoms": 2, "e_pw": -100.0},
+        "pw::sc": {"n_atoms": 1, "e_pw": -50.0},
+        "r10_l4_j120::bcc": {"n_atoms": 2, "e_nsw": -99.978},
+        "r10_l4_j120::sc": {"n_atoms": 1, "e_nsw": -49.975},
+    }
+    return ScanReport(
+        workflow="orbgen.basis",
+        pk=2,
+        uuid="uuid",
+        label="",
+        status="finished [0]",
+        exit_status=0,
+        decision={
+            "reference": "r10_l4_j120",
+            "tolerance_meV": 100.0,
+            # the gate is None: it was dropped because these cells have no monomer
+            "atomization_tolerance_meV": None,
+            "atomization_gate_ignored_meV": 43.36,
+            "pw_reference": {"source": "computed", "ecutwfc": 110.0, "n_geometries": 2},
+            "reference_point": {"r_cut": 10.0, "l_max": 4, "ecutjy": 120.0},
+            "geometries": {"source": "structure.yml cells", "names": geometries,
+                           "n_atoms": {"bcc": 2, "sc": 1}},
+            "ran": ["r10_l4_j120"],
+            "planned": ["r10_l4_j120"],
+            "planned_but_not_run": [],
+            "stopped_early": False,
+        },
+        cells=cells,
+        geometries=geometries,
+        table=[
+            {"label": "r10_l4_j120", "candidate": {"r_cut": 10.0, "l_max": 4,
+                                                   "ecutjy": 120.0},
+             "dE_per_atom_meV": {"bcc": 22.0, "sc": 25.0},
+             "dE_max_abs_meV": 25.0, "atomization_vs_reference_meV": None,
+             "seconds": 100.0, "nchi": 795, "cost": 632.0, "tolerance_ok": True,
+             "gate_ok": True, "passed": True},
+        ],
+        chosen={"label": "r10_l4_j120",
+                "candidate": {"r_cut": 10.0, "l_max": 4, "ecutjy": 120.0},
+                "dE_max_abs_meV": 25.0, "atomization_vs_reference_meV": None,
+                "seconds": 100.0, "nchi": 795},
+    )
+
+
+def test_a_structure_run_is_not_reported_as_a_dimer_run():
+    """The table lists fcc/bcc/sc/diamond: calling them "dimers" would be a lie."""
+    text = render_scan_report(_structure_report())
+    assert "over the cells ≤ 100 meV" in text
+    assert "have no monomer" in text and "43.4 meV was ignored" in text
+    assert "max cell" in text                       # the criterion column
+    assert "max dimer" not in text
+    assert " — bcc, sc" in text                     # the cells of the run, in the header
+    assert "max |ΔE|/atom (the cells)" in text
+    # no monomer, so there is no atomization section and no dA number
+    assert "## 3. Atomization energy" not in text
+    # ... while the dimer report still says dimer
+    dimer = render_scan_report(_scan_report())
+    assert "over the dimers ≤ 100 meV" in dimer
+    assert "max dimer" in dimer and "## 3. Atomization energy" in dimer
+
+
+def test_the_delta_e_panels_group_the_grid_by_ecutjy():
+    """One panel per ecutjy, x = r_cut, one line per l_max, mean + spread per point."""
+    from aiida_orbgen.utils.report.plots import grid_groups, plot_file_name
+
+    rows = [
+        {"label": "r9_l3_j100", "candidate": {"r_cut": 9.0, "l_max": 3, "ecutjy": 100.0},
+         "dE_per_atom_meV": {"a": 500.0, "b": 480.0, "c": 460.0}},
+        {"label": "r10_l3_j100", "candidate": {"r_cut": 10.0, "l_max": 3,
+                                                "ecutjy": 100.0},
+         "dE_per_atom_meV": {"a": 400.0, "b": 380.0, "c": 360.0}},
+        {"label": "r9_l4_j100", "candidate": {"r_cut": 9.0, "l_max": 4, "ecutjy": 100.0},
+         "dE_per_atom_meV": {"a": 450.0, "b": 430.0, "c": 410.0}},
+        # a lone r_cut cannot be an axis: this group is not plotted
+        {"label": "only", "candidate": {"r_cut": 12.0, "l_max": 4, "ecutjy": 150.0},
+         "dE_per_atom_meV": {"a": 10.0}},
+    ]
+    groups = grid_groups(rows)
+    assert list(groups) == [100.0]
+    group = groups[100.0]
+    assert group["l_max"] == [3, 4] and group["r_cut"] == [9.0, 10.0]
+    point = group["points"][(3, 9.0)]
+    assert point["mean"] == pytest.approx(480.0)     # mean over the geometries
+    assert point["low"] == pytest.approx(460.0) and point["high"] == pytest.approx(500.0)
+    assert point["max"] == pytest.approx(500.0)      # ... the criterion is the max
+    assert point["n"] == 3
+    assert plot_file_name(100.0) == "deltaE_vs_rcut_j100.png"
+    assert grid_groups([]) == {}
+
+
+def test_a_grid_report_writes_one_png_per_ecutjy_and_embeds_them(tmp_path):
+    """`report -i output.json -o ./` also writes the ΔE-vs-r_cut panels."""
+    pytest.importorskip("matplotlib")
+    from aiida_orbgen.utils.report.plots import render_delta_e_plots
+
+    data = _basis_grid_report()
+    figures = render_delta_e_plots(data, tmp_path)
+    assert [figure["ecutjy"] for figure in figures] == [100.0, 150.0]
+    for figure in figures:
+        path = tmp_path / figure["file"]
+        assert path.is_file() and path.stat().st_size > 1000
+    data.figures = figures
+    text = render_scan_report(data)
+    assert "## 4. ΔE against r_cut (one panel per ecutjy)" in text
+    for figure in figures:
+        assert f"]({figure['file']})" in text       # the image is embedded, relatively
+    # a report with no grid (a ladder) simply has no such section
+    assert "ΔE against r_cut" not in render_scan_report(_scan_report())
+
+
+def _basis_grid_report() -> ScanReport:
+    """A 2x2 grid at two ecutjy values — what the plot section is for."""
+    rows = []
+    for ecutjy in (100.0, 150.0):
+        for l_max in (3, 4):
+            for r_cut in (9.0, 10.0):
+                mean = 600.0 - 10.0 * ecutjy / 10.0 - 20.0 * l_max - 30.0 * r_cut
+                rows.append({
+                    "label": f"r{r_cut:g}_l{l_max}_j{ecutjy:g}",
+                    "candidate": {"r_cut": r_cut, "l_max": l_max, "ecutjy": ecutjy},
+                    "dE_per_atom_meV": {"g1": mean, "g2": mean * 0.9},
+                    "dE_max_abs_meV": mean, "atomization_vs_reference_meV": None,
+                    "seconds": 100.0, "nchi": 500, "cost": 1.0, "tolerance_ok": True,
+                    "gate_ok": True, "passed": True,
+                })
+    return ScanReport(
+        workflow="orbgen.basis", pk=3, uuid="uuid", label="", status="finished [0]",
+        exit_status=0,
+        decision={"reference": "r10_l4_j150", "tolerance_meV": 100.0,
+                  "atomization_tolerance_meV": None,
+                  "pw_reference": {"source": "computed", "ecutwfc": 140.0,
+                                   "n_geometries": 2},
+                  "reference_point": {"r_cut": 10.0, "l_max": 4, "ecutjy": 150.0},
+                  "ran": [row["label"] for row in rows],
+                  "planned": [row["label"] for row in rows],
+                  "planned_but_not_run": [], "stopped_early": False},
+        cells={}, geometries=["g1", "g2"], table=rows,
+        chosen={"label": "r10_l4_j150",
+                "candidate": {"r_cut": 10.0, "l_max": 4, "ecutjy": 150.0},
+                "dE_max_abs_meV": 1.0, "atomization_vs_reference_meV": None,
+                "seconds": 100.0, "nchi": 500},
+    )
 
 
 def test_the_csv_carries_one_row_per_candidate_and_geometry(tmp_path):

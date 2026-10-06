@@ -263,6 +263,8 @@ def summarise_outcome(config: dict, final_orbital: dict, out_dir: str | Path) ->
         dft_root=str(final_orbital.get("dft_root") or ""),
         status=str(final_orbital.get("status") or ""),
     )
+    from aiida_orbgen.utils.report.validate import validate_orbital
+
     produced = [Path(path) for path in final_orbital.get("files") or []]
     spillages = [float(value) for value in final_orbital.get("spillage") or []]
     validated = {Path(item["file"]).name: item
@@ -272,7 +274,25 @@ def summarise_outcome(config: dict, final_orbital: dict, out_dir: str | Path) ->
         nzeta = list(orbital.get("nzeta") or [])
         name = f"_{nzeta_string(nzeta)}.orb" if nzeta else ""
         match = next((path for path in produced if path.name.endswith(name)), None)
-        check = validated.get(match.name) if match else None
+        # Validate against *this* entry's scheme rather than trusting the report's list:
+        # the report checks every produced file against every requested scheme, and a
+        # scheme that is a prefix of another (`4s3p3d2f` / `4s3p3d2f1g`) used to be
+        # matched by substring — which called a good file a failure.  A file that cannot
+        # be read here keeps the report's verdict, so nothing is hidden.
+        reported = validated.get(match.name) if match else None
+        check = reported
+        if match and nzeta:
+            own = validate_orbital(match, [nzeta])
+            if own.get("per_l") is not None:
+                check = own
+                if reported is not None and \
+                        bool(reported.get("ok")) != bool(own.get("ok")):
+                    out.warnings.append(
+                        f"{match.name}: the report's own check says "
+                        f"{'ok' if reported.get('ok') else 'failed'} while this entry's "
+                        f"scheme ({nzeta_string(nzeta)}) says "
+                        f"{'ok' if own.get('ok') else 'failed'}"
+                    )
         entry: dict[str, Any] = {
             "index": index,
             "scheme": nzeta_string(nzeta) if nzeta else "?",
@@ -282,7 +302,7 @@ def summarise_outcome(config: dict, final_orbital: dict, out_dir: str | Path) ->
             "file": str(match) if match else None,
             "bytes": match.stat().st_size if match and match.is_file() else None,
             "spillage": spillages[index] if index < len(spillages) else None,
-            "per_l": list(check.get("per_l")) if check else None,
+            "per_l": list((check or {}).get("per_l") or []) or None,
             "ok": bool(check.get("ok")) if check else False,
             "reason": (check.get("reason") if check else None)
                       or (failure or None)
